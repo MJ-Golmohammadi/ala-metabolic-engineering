@@ -1,0 +1,106 @@
+5-ALA_Metabolic_Engineering/                    # ریشه پروژه
+├── 📄 README.md                               # مستندات اصلی پروژه
+├── 📄 requirements.txt                        # لیست پکیج‌های مورد نیاز
+├── 📄 environment.yml                         # Conda environment
+├── 📄 main_execution.py                       # اسکریپت اجرای اصلی
+├── 📄 run_analysis.py                         # اسکریپت اجرای جایگزین
+│
+├── 🔧 config/                                 # پیکربندی‌ها
+│   ├── engineering_scenarios.yaml            # سناریوهای مهندسی متابولیک
+│   ├── model_parameters.yaml                 # پارامترهای مدل
+│   └── ml_config.yaml                        # تنظیمات ماشین لرنینگ
+│
+├── 📊 scripts/                               # کدهای تحلیل
+│   ├── 1_baseline_simulation.py
+│   ├── 2_metabolic_engineering.py
+│   ├── 3_fba_impact_scoring.py
+│   ├── 4_tradeoff_analysis.py
+│   ├── 5_bottleneck_identification.py
+│   ├── 6_flux_coupling_analysis.py
+│   ├── 7_pathway_analysis.py
+│   ├── 8_sensitivity_robustness.py
+│   ├── 9_ml_integration.py
+│   ├── 10_ml_priority_scoring.py
+│   ├── 11_final_ranking.py
+│   ├── 12_final_integrated_analysis.py
+│   ├── 13_publication_figures.py
+│   └── utils/                                # توابع کمکی
+│       ├── model_utils.py
+│       ├── analysis_utils.py
+│       ├── visualization_utils.py
+│       └── ml_utils.py
+│
+├── 🧬 models/                                # مدل‌های متابولیک
+│   ├── iJN1463.xml                          # مدل پایه
+│   ├── final_constrained_rnaseq_thermo/     # مدل‌های constraint شده
+│   │   ├── iJN1463_Glu_ExprThermoConstrainedFile.xml
+│   │   ├── iJN1463_Cit_ExprThermoConstrainedFile.xml
+│   │   ├── iJN1463_Ser_ExprThermoConstrainedFile.xml
+│   │   └── iJN1463_Fer_ExprThermoConstrainedFile.xml
+│   └── kegg_reactions_CC_ph7.0.csv          # داده‌های ترمودینامیکی
+│
+├── 📈 results/                              # خروجی‌های تحلیل
+│   ├── tables/                             # جداول داده
+│   │   ├── baseline_simulation.csv
+│   │   ├── engineering_results.csv
+│   │   ├── fba_impact_scores.csv
+│   │   ├── tradeoff_analysis.csv
+│   │   ├── bottlenecks_wild_type.csv
+│   │   ├── bottlenecks_engineered.csv
+│   │   ├── flux_coupling_analysis.csv
+│   │   ├── pathway_analysis.csv
+│   │   ├── sensitivity_analysis.csv
+│   │   ├── ml_feature_importance.csv
+│   │   ├── ml_priority_scores.csv
+│   │   ├── final_engineering_ranking.csv
+│   │   └── engineering_recommendations.csv
+│   │
+│   ├── figures/                           # نمودارها
+│   │   ├── publication_main_figure.png
+│   │   ├── supplementary_figure_1.png
+│   │   ├── multi_environment_summary.png
+│   │   ├── growth_production_tradeoff.png
+│   │   ├── bottleneck_analysis.png
+│   │   ├── ml_integration_analysis.png
+│   │   ├── pathway_analysis.png
+│   │   ├── sensitivity_robustness.png
+│   │   └── executive_summary.png
+│   │
+│   └── flux_maps/                         # نقشه‌های فلاکس
+│       ├── wild_type_flux_distribution.json
+│       ├── engineered_flux_distribution.json
+│       └── pathway_flux_comparison.json
+│
+├── 📚 data/                               # داده‌های خام
+│   ├── rnaseq/
+│   │   ├── merged_expression.csv
+│   │   ├── expression_Glu.csv
+│   │   ├── expression_Cit.csv
+│   │   ├── expression_Ser.csv
+│   │   └── expression_Fer.csv
+│   ├── experimental/
+│   │   ├── growth_rates.csv
+│   │   ├── ala_production.csv
+│   │   └── metabolite_concentrations.csv
+│   └── external/
+│       ├── kegg_pathways.json
+│       └── gene_annotations.csv
+│
+├── 📝 docs/                              # مستندات
+│   ├── methodology.md
+│   ├── installation_guide.md
+│   ├── user_guide.md
+│   ├── supplementary_material.md
+│   └── publication_ready/
+│       ├── main_text.md
+│       ├── supplementary_info.md
+│       └── figure_captions.md
+│
+└── 🔬 tests/                             # تست‌ها
+    ├── test_model_loading.py
+    ├── test_simulation.py
+    ├── test_analysis.py
+    ├── test_ml_integration.py
+    └── test_data/
+        ├── test_model.xml
+        └── test_data.csv

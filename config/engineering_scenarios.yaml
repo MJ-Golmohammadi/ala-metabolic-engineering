@@ -1,0 +1,283 @@
+# config/engineering_scenarios.yaml
+# Standardized Environments for Scientific Comparison
+# All environments have identical parameters and values for fair comparison
+
+environments:
+  # Standardized carbon-equivalent conditions (6 mmol C/gDW/h)
+  # All environments have EXACTLY the same parameters and values
+  
+  # Glucose: C6H12O6 → 6 carbon atoms
+  Glu:
+    EX_glc__D_e: [-1.0, 1000.0]     # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
+    EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake  
+    EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
+    EX_so4_e: [-2.0, 1000.0]        # Sulfate uptake
+    EX_fe2_e: [-0.5, 1000.0]        # Iron uptake
+    EX_mg2_e: [-0.5, 1000.0]        # Magnesium uptake
+    EX_k_e: [-0.5, 1000.0]          # Potassium uptake
+    EX_ca2_e: [-0.2, 1000.0]        # Calcium uptake
+    EX_cl_e: [-0.5, 1000.0]         # Chloride uptake
+    EX_co2_e: [0.0, 1000.0]         # CO2 secretion
+    EX_h2o_e: [0.0, 1000.0]         # Water exchange
+    EX_h_e: [-1000.0, 1000.0]       # Proton exchange
+
+  # Citrate: C6H8O7 → 6 carbon atoms  
+  Cit:
+    EX_cit_e: [-1.0, 1000.0]        # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
+    EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
+    EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
+    EX_so4_e: [-2.0, 1000.0]        # Sulfate uptake
+    EX_fe2_e: [-0.5, 1000.0]        # Iron uptake
+    EX_mg2_e: [-0.5, 1000.0]        # Magnesium uptake
+    EX_k_e: [-0.5, 1000.0]          # Potassium uptake
+    EX_ca2_e: [-0.2, 1000.0]        # Calcium uptake
+    EX_cl_e: [-0.5, 1000.0]         # Chloride uptake
+    EX_co2_e: [0.0, 1000.0]         # CO2 secretion
+    EX_h2o_e: [0.0, 1000.0]         # Water exchange
+    EX_h_e: [-1000.0, 1000.0]       # Proton exchange
+
+  # Serine: C3H7NO3 → 3 carbon atoms
+  Ser:
+    EX_ser__L_e: [-2.0, 1000.0]     # 2.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
+    EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
+    EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
+    EX_so4_e: [-2.0, 1000.0]        # Sulfate uptake
+    EX_fe2_e: [-0.5, 1000.0]        # Iron uptake
+    EX_mg2_e: [-0.5, 1000.0]        # Magnesium uptake
+    EX_k_e: [-0.5, 1000.0]          # Potassium uptake
+    EX_ca2_e: [-0.2, 1000.0]        # Calcium uptake
+    EX_cl_e: [-0.5, 1000.0]         # Chloride uptake
+    EX_co2_e: [0.0, 1000.0]         # CO2 secretion
+    EX_h2o_e: [0.0, 1000.0]         # Water exchange
+    EX_h_e: [-1000.0, 1000.0]       # Proton exchange
+
+  # Ferulate: C10H10O4 → 10 carbon atoms
+  Fer:
+    EX_fer_e: [-0.6, 1000.0]        # 0.6 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
+    EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
+    EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
+    EX_so4_e: [-2.0, 1000.0]        # Sulfate uptake
+    EX_fe2_e: [-0.5, 1000.0]        # Iron uptake
+    EX_mg2_e: [-0.5, 1000.0]        # Magnesium uptake
+    EX_k_e: [-0.5, 1000.0]          # Potassium uptake
+    EX_ca2_e: [-0.2, 1000.0]        # Calcium uptake
+    EX_cl_e: [-0.5, 1000.0]         # Chloride uptake
+    EX_co2_e: [0.0, 1000.0]         # CO2 secretion
+    EX_h2o_e: [0.0, 1000.0]         # Water exchange
+    EX_h_e: [-1000.0, 1000.0]       # Proton exchange
+    
+carbon_equivalency_calculation:
+  glucose: "C6H12O6 (6C) → 1.0 mmol × 6 = 6 mmol C"
+  citrate: "C6H8O7 (6C) → 1.0 mmol × 6 = 6 mmol C"
+  serine: "C3H7NO3 (3C) → 2.0 mmol × 3 = 6 mmol C"
+  ferulate: "C10H10O4 (10C) → 0.6 mmol × 10 = 6 mmol C"
+
+engineering_scenarios:
+  # Control scenario - wild type strain
+  wild_type: {}
+  
+  # Single modification scenarios for individual effect analysis
+  OE_hemA_only:
+    GLUTRR: overexpress_5x
+    
+  OE_hemL_only:
+    G1SAT: overexpress_5x
+    
+  OE_gltX_only:
+    GLUTRS: overexpress_2x
+    
+  OE_gdhA_only:
+    GLUDy: overexpress_2x
+    
+  OE_gltB_only:
+    GLUSy: overexpress_2x
+    
+  OE_icd_only:
+    ICDHyr: overexpress_3x
+    
+  OE_ppc_only:
+    PPC: overexpress_1.5x
+    
+  OE_zwfA_only:
+    G6PDH2r: overexpress_3x
+    
+  OE_gntZ_only:
+    GND: overexpress_2x
+    
+  OE_sthA_only:
+    NADTRHD: overexpress_1.5x
+    
+  OE_sodA_only:
+    SPODM: overexpress_2x
+    
+  OE_katG_only:
+    CAT: overexpress_2x
+
+  KO_hemB_only:
+    PPBNGS: knockdown_80
+    
+  KD_proB_only:
+    GLU5K: knockdown_40
+
+  # Core pathway enhancement scenarios
+  Core_C5_Enhancement:
+    GLUTRR: overexpress_5x    # hemA - First committed step
+    G1SAT: overexpress_5x     # hemL - Prevents GSA accumulation
+    PPBNGS: knockdown_80      # hemB - Reduces ALA consumption
+    GLUTRS: overexpress_2x    # gltX - Ensures substrate supply
+
+  # Full engineering scenario combining all modifications
+  Comprehensive_C5_Optimization:
+    GLUTRR: overexpress_5x    # hemA
+    G1SAT: overexpress_5x     # hemL  
+    GLUTRS: overexpress_2x    # gltX
+    GLUDy: overexpress_2x     # gdhA - Glutamate supply
+    GLUSy: overexpress_2x     # gltB - Glutamate synthesis
+    ICDHyr: overexpress_3x    # icd - TCA cycle flux
+    PPC: overexpress_1.5x     # ppc - Anaplerotic reaction
+    G6PDH2r: overexpress_3x   # zwfA - PPP flux, NADPH
+    GND: overexpress_2x       # gntZ - PPP flux
+    NADTRHD: overexpress_1.5x # sthA - NADPH regeneration
+    SPODM: overexpress_2x     # sodA - Oxidative stress
+    CAT: overexpress_2x       # katG - Oxidative stress
+    PPBNGS: knockdown_80      # hemB - Consumption reduction
+    GLU5K: knockdown_40       # proB - Competitive pathway
+
+  # Balanced approach for growth-production trade-off
+  Balanced_Approach:
+    GLUTRR: overexpress_5x    # hemA
+    G1SAT: overexpress_5x     # hemL
+    PPBNGS: knockdown_80      # hemB  
+    GLUTRS: overexpress_2x    # gltX
+    GLUSy: overexpress_2x     # gltB
+    G6PDH2r: overexpress_3x   # zwfA
+    CAT: overexpress_2x       # katG
+
+  # Data-driven design based on expression patterns
+  Consistency_Driven_Design:
+    GLUTRR: overexpress_5x    # hemA
+    GLUTRS: overexpress_2x    # gltX
+    GLUDy: overexpress_2x     # gdhA
+    GLUSy: overexpress_2x     # gltB
+    ICDHyr: overexpress_3x    # icd
+    G6PDH2r: overexpress_3x   # zwfA
+    NADTRHD: overexpress_1.5x # sthA
+    CAT: overexpress_2x       # katG
+    GLU5K: knockdown_40       # proB
+
+  # Additional specialized scenarios
+  Precursor_Focused:
+    GLUDy: overexpress_3x     # gdhA - Major glutamate source
+    GLUSy: overexpress_2x     # gltB - Glutamate synthesis
+    ICDHyr: overexpress_3x    # icd - α-ketoglutarate supply
+    PPC: overexpress_2x       # ppc - Anaplerosis
+    GLUTRR: overexpress_3x    # hemA - C5 pathway
+
+  Redox_Balanced:
+    G6PDH2r: overexpress_3x   # zwfA - NADPH generation
+    GND: overexpress_2x       # gntZ - NADPH generation  
+    NADTRHD: overexpress_2x   # sthA - NADPH transhydrogenase
+    GLUTRR: overexpress_3x    # hemA - NADPH consumer
+    CAT: overexpress_2x       # katG - Oxidative protection
+
+  Minimal_Modifications:
+    GLUTRR: overexpress_5x    # hemA - Key bottleneck
+    PPBNGS: knockdown_80      # hemB - Major consumer
+    # Only 2 modifications for high impact/low complexity
+
+objectives:
+  # Optimization objectives for multi-objective analysis
+  max_biomass: BIOMASS_KT2440_WT3      # Maximize cellular growth
+  max_ala: G1SAT                       # Maximize ALA production (for trade-off analysis)
+
+simulation_parameters:
+  # General simulation settings
+  tolerance: 1e-7
+  max_iterations: 1000
+  method: "fba"  # flux balance analysis
+  
+  # FVA parameters
+  fva_fraction: 0.9  # Fraction of optimum for variability analysis
+  
+  # Sensitivity analysis
+  parameter_range: [0.5, 1.5]  # Range for parameter perturbation
+  
+  # ML parameters
+  test_size: 0.2
+  random_state: 42
+  cv_folds: 5
+
+gene_reaction_mapping:
+  # Core C5 pathway genes
+  hemA: GLUTRR
+  hemL: G1SAT  
+  gltX: GLUTRS
+  hemB: PPBNGS
+  
+  # Precursor supply genes
+  gdhA: GLUDy
+  gltB: GLUSy
+  icd: ICDHyr
+  ppc: PPC
+  zwfA: G6PDH2r
+  gntZ: GND
+  
+  # Cofactor and stress genes
+  sthA: NADTRHD
+  sodA: SPODM
+  katG: CAT
+  
+  # Competitive pathway genes
+  proB: GLU5K
+
+modification_types:
+  # Genetic modification operations with bounds adjustment factors
+  knockout: 
+    bounds: [0.0, 0.0]
+    description: "Complete gene knockout"
+    
+  knockdown_80:
+    bounds_factor: 0.2
+    description: "80% reduction in enzyme activity"
+    
+  knockdown_40:
+    bounds_factor: 0.6  
+    description: "40% reduction in enzyme activity"
+    
+  overexpress_1.5x:
+    bounds_factor: 1.5
+    description: "1.5-fold overexpression"
+    
+  overexpress_2x:
+    bounds_factor: 2.0
+    description: "2-fold overexpression"
+    
+  overexpress_3x:
+    bounds_factor: 3.0
+    description: "3-fold overexpression"
+    
+  overexpress_5x:
+    bounds_factor: 5.0
+    description: "5-fold overexpression"
+
+pathway_definitions:
+  c5_ala_pathway:
+    name: "C5 Glutamate Pathway"
+    reactions: ["GLUTRS", "GLUTRR", "G1SAT"]
+    precursors: ["L-glutamate", "tRNA-glu"]
+    products: ["5-ALA"]
+    cofactors: ["ATP", "NADPH"]
+    
+  precursor_supply:
+    name: "Precursor Supply Pathways" 
+    reactions: ["GLUDy", "GLUSy", "ICDHyr", "PPC", "G6PDH2r"]
+    description: "Reactions supplying glutamate and carbon precursors"
+    
+  competitive_pathways:
+    name: "Competitive Consumption Pathways"
+    reactions: ["PPBNGS", "GLU5K"]
+    description: "Reactions consuming ALA or competing for precursors"
