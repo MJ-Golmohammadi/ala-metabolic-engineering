@@ -142,8 +142,10 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
                     rid = rid[0]
 
             if rid:
+                dg = dg_map.get(rid, None)
                 lb_dg, ub_dg = get_bounds_from_dg_file(rid, dg_map)
             else:
+                dg = None
                 lb_dg, ub_dg = 0.0, 50.0
                 
             if rxn.reversibility:  # If the reaction is reversible, allow flux in both directions
