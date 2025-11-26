@@ -1,4 +1,7 @@
 # requirements.txt
+# Build system essentials
+setuptools>=65.0.0
+wheel>=0.38.0
 # Core Scientific Computing
 cobra==0.26.3
 pandas==2.0.3
@@ -32,4 +35,5 @@ widgetsnbextension==4.0.9
 
 # Optional: For larger datasets and performance
 # numba==0.57.1  # JIT compilation for performance
+
 # dask==2023.8.1  # Parallel computing
