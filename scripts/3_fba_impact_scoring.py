@@ -11,11 +11,20 @@ import seaborn as sns
 
 def calculate_comprehensive_impact_scores(engineering_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Calculate comprehensive FBA impact scores across all environments
-    with enhanced statistical analysis
+    Calculate comprehensive FBA impact scores with data validation
     """
     
-    environments = engineering_df['environment'].unique()
+    # Filter only successful simulations
+    valid_data = engineering_df[
+        (engineering_df['solution_status'] == 'optimal') & 
+        (engineering_df['objective'] == 'max_biomass')
+    ]
+    
+    if valid_data.empty:
+        print("⚠️ No valid simulation data available for impact scoring")
+        return pd.DataFrame()
+    
+    environments = valid_data['environment'].unique()
     impact_scores = []
     
     print("📊 Calculating multi-environment impact scores...")
@@ -24,10 +33,9 @@ def calculate_comprehensive_impact_scores(engineering_df: pd.DataFrame) -> pd.Da
         print(f"  Processing {env} environment...")
         
         # Get environment-specific wild-type baseline
-        wt_data = engineering_df[
-            (engineering_df['scenario'] == 'wild_type') & 
-            (engineering_df['environment'] == env) &
-            (engineering_df['objective'] == 'max_biomass')
+        wt_data = valid_data[
+            (valid_data['scenario'] == 'wild_type') & 
+            (valid_data['environment'] == env)
         ]
         
         if len(wt_data) == 0:
@@ -38,20 +46,21 @@ def calculate_comprehensive_impact_scores(engineering_df: pd.DataFrame) -> pd.Da
         wt_growth = wt_data['growth_rate'].values[0]
         wt_yield = wt_data['yield_mmol_g'].values[0]
         
+        # Skip if wild-type values are zero
+        if wt_ala == 0 or wt_growth == 0:
+            print(f"    ⚠️ Zero wild-type values for {env}, skipping")
+            continue
+        
         print(f"    Wild-type baseline - ALA: {wt_ala:.4f}, Growth: {wt_growth:.4f}")
         
         # Calculate scores for all scenarios in this environment
-        scenarios = engineering_df[engineering_df['environment'] == env]['scenario'].unique()
+        scenarios = valid_data[valid_data['environment'] == env]['scenario'].unique()
         
         for scenario in scenarios:
             if scenario == 'wild_type':
                 continue
                 
-            scenario_data = engineering_df[
-                (engineering_df['scenario'] == scenario) & 
-                (engineering_df['environment'] == env) &
-                (engineering_df['objective'] == 'max_biomass')
-            ]
+            scenario_data = valid_data[valid_data['scenario'] == scenario]
             
             if len(scenario_data) == 0:
                 continue
@@ -62,24 +71,23 @@ def calculate_comprehensive_impact_scores(engineering_df: pd.DataFrame) -> pd.Da
             yield_value = scenario_data['yield_mmol_g'].values[0]
             modification_count = scenario_data['modification_count'].values[0]
             
-            # Calculate Δflux and improvements
+            # Calculate improvements with zero division protection
             delta_flux_ala = ala_flux - wt_ala
             delta_flux_ala_percent = (delta_flux_ala / wt_ala * 100) if wt_ala > 0 else 0
             
-            # Multi-criteria scoring with enhanced metrics
             ala_improvement = ala_flux / wt_ala if wt_ala > 0 else 0
             growth_maintenance = growth_flux / wt_growth if wt_growth > 0 else 0
             yield_improvement = yield_value / wt_yield if wt_yield > 0 else 0
             
-            # Normalized impact scores (0-1) with saturation
+            # Normalized impact scores with bounds checking
             ala_impact = min(1.0, max(0, (ala_flux - wt_ala) / max(wt_ala * 2, 0.1)))
             growth_impact = min(1.0, growth_flux / max(wt_growth, 0.1))
             yield_impact = min(1.0, max(0, (yield_value - wt_yield) / max(wt_yield * 2, 0.01)))
             
             # Engineering efficiency penalty for complexity
-            complexity_penalty = max(0, 1 - (modification_count / 15))  # Penalize over-engineering
+            complexity_penalty = max(0, 1 - (modification_count / 15))
             
-            # Combined FBA impact score with complexity adjustment
+            # Combined FBA impact score
             fba_score = (0.6 * ala_impact + 0.25 * growth_impact + 0.15 * yield_impact) * complexity_penalty
             
             impact_scores.append({
@@ -102,7 +110,7 @@ def calculate_comprehensive_impact_scores(engineering_df: pd.DataFrame) -> pd.Da
             })
     
     return pd.DataFrame(impact_scores)
-
+    
 def create_impact_visualization(impact_scores_df: pd.DataFrame):
     """
     Create comprehensive impact score visualization
