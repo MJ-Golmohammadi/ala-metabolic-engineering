@@ -10,4 +10,4 @@ for rxn in model.reactions:
         dead.append(rxn.id)
 
 print("Number of dead reactions:", len(dead))
-print(dead[:50])  
+print(dead[:500])  
