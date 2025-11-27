@@ -4,9 +4,10 @@ model = cobra.io.read_sbml_model(
     "models/final_constrained_rnaseq_thermo/iJN1463_Glu_ExprThermoConstrainedFile.xml"
 )
 
-print("Objective before:", model.objective)
+dead = []
+for rxn in model.reactions:
+    if rxn.lower_bound == 0 and rxn.upper_bound == 0:
+        dead.append(rxn.id)
 
-model.objective = "BIOMASS_KT2440_WT3"
-solution = model.optimize()
-
-print("Growth:", solution.objective_value)
+print("Number of dead reactions:", len(dead))
+print(dead[:50])  
