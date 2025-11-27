@@ -66,19 +66,40 @@ def create_engineered_strain(base_model: cobra.Model, modifications: Dict) -> co
     return engineered
 
 def simulate_with_objective(model: cobra.Model, objective: str, environment: Dict) -> cobra.Solution:
+    """
+    Apply environment constraints to a working copy of the model and optimize.
+    This avoids context-manager revert issues and preserves the original model.
+    """
+    working = model.copy()
 
+    # Apply environment bounds
     for rxn_id, bounds in environment.items():
-        if rxn_id in model.reactions:
-            model.reactions.get_by_id(rxn_id).bounds = bounds
+        if rxn_id in working.reactions:
+            try:
+                lb, ub = float(bounds[0]), float(bounds[1])
+                working.reactions.get_by_id(rxn_id).bounds = (lb, ub)
+            except Exception as e:
+                logger.warning("Invalid bounds for %s: %s (%s)", rxn_id, bounds, e)
 
-    with model:
-        biomass_rxn = model.reactions.get_by_id('BIOMASS_KT2440_WT3')
-        biomass_rxn.lower_bound = 0
-        biomass_rxn.upper_bound = 1000
+    # Ensure biomass is open
+    if 'BIOMASS_KT2440_WT3' in working.reactions:
+        b = working.reactions.get_by_id('BIOMASS_KT2440_WT3')
+        b.lower_bound = 0.0
+        b.upper_bound = 1000.0
 
-        model.objective = objective
-        solution = model.optimize()
-        return solution
+    # Set objective and optimize
+    try:
+        working.objective = objective
+    except Exception as e:
+        logger.error("Failed to set objective %s: %s", objective, e)
+        return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
+
+    try:
+        sol = working.optimize()
+        return sol
+    except Exception as e:
+        logger.error("Optimization failed: %s", e)
+        return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
 
 
 def get_substrate_rxn_for_environment(environment: str) -> str:
