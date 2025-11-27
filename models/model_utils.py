@@ -65,73 +65,21 @@ def create_engineered_strain(base_model: cobra.Model, modifications: Dict) -> co
     
     return engineered
 
-
 def simulate_with_objective(model: cobra.Model, objective: str, environment: Dict) -> cobra.Solution:
-    """
-    Perform FBA simulation with specified objective and environmental conditions
-    Enhanced for multiple environments with COMPREHENSIVE environment application
-    """
+
+    for rxn_id, bounds in environment.items():
+        if rxn_id in model.reactions:
+            model.reactions.get_by_id(rxn_id).bounds = bounds
+
     with model:
-        try:
-            # 1. FIRST apply environmental constraints
-            print(f"    Applying environment constraints for {objective}...")
-            applied_constraints = 0
-            for rxn_id, bounds in environment.items():
-                if rxn_id in model.reactions:
-                    try:
-                        # Ensure bounds are numeric
-                        lb = float(bounds[0])
-                        ub = float(bounds[1])
-                        model.reactions.get_by_id(rxn_id).bounds = (lb, ub)
-                        applied_constraints += 1
-                        print(f"      ✅ {rxn_id}: [{lb}, {ub}]")
-                    except (ValueError, TypeError) as e:
-                        print(f"      ⚠️ Invalid bounds for {rxn_id}: {bounds} - {e}")
-                else:
-                    print(f"      ⚠️ Reaction {rxn_id} not found in model")
-            
-            print(f"    Applied {applied_constraints} environmental constraints")
-            
-            # 2. Ensure biomass reaction is properly configured
-            if 'BIOMASS_KT2440_WT3' in model.reactions:
-                biomass_rxn = model.reactions.get_by_id('BIOMASS_KT2440_WT3')
-                biomass_rxn.lower_bound = 0
-                biomass_rxn.upper_bound = 1000
-                print(f"    Biomass reaction configured: [{biomass_rxn.lower_bound}, {biomass_rxn.upper_bound}]")
-            else:
-                print(f"    ❌ BIOMASS_KT2440_WT3 not found in model!")
-                return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
-            
-            # 3. Set objective function
-            if objective in model.reactions:
-                model.objective = objective
-                print(f"    Objective set: {objective}")
-            else:
-                print(f"    ⚠️ Objective {objective} not found, using biomass as fallback")
-                model.objective = 'BIOMASS_KT2440_WT3'
-            
-            # 4. Perform flux balance analysis
-            print(f"    Running optimization...")
-            solution = model.optimize()
-            
-            # 5. Validate and log results
-            print(f"    Optimization status: {solution.status}")
-            print(f"    Objective value: {solution.objective_value:.8f}")
-            
-            # 6. Check key fluxes for debugging
-            if solution.status == 'optimal' and solution.objective_value > 1e-8:
-                key_reactions = ['EX_glc__D_e', 'EX_o2_e', 'G1SAT', 'BIOMASS_KT2440_WT3']
-                print(f"    Key fluxes:")
-                for rxn_id in key_reactions:
-                    if rxn_id in solution.fluxes:
-                        flux = solution.fluxes[rxn_id]
-                        print(f"      {rxn_id}: {flux:.6f}")
-            
-            return solution
-            
-        except Exception as e:
-            print(f"    ❌ Simulation error: {e}")
-            return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
+        biomass_rxn = model.reactions.get_by_id('BIOMASS_KT2440_WT3')
+        biomass_rxn.lower_bound = 0
+        biomass_rxn.upper_bound = 1000
+
+        model.objective = objective
+        solution = model.optimize()
+        return solution
+
 
 def get_substrate_rxn_for_environment(environment: str) -> str:
     """
