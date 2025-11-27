@@ -124,9 +124,35 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
     logging.info("Model loaded: %d reactions", len(model.reactions))
 
     summary_rows = []
-    EPS = 1e-6   # Small epsilon to avoid hard zero-flux constraints (Option A)
+
+    ESSENTIAL_RXNS = {
+        "ACONIs", "ATPS4r", "ATPM", "PDH", "NADH16pp",
+        "ICDHyr", "CS", "GAPD", "PGK",
+        "GLUTRS", "GLUTRR", "G1SAT"
+    }
+
+    EPS = 1e-5   
 
     for rxn in model.reactions:
+
+        if rxn.id in ESSENTIAL_RXNS:
+            final_lb = -1000.0 if rxn.reversibility else 0.0
+            final_ub = 1000.0
+            rxn.lower_bound = float(final_lb)
+            rxn.upper_bound = float(final_ub)
+
+            summary_rows.append({
+                "reaction_id": rxn.id,
+                "reaction_name": rxn.name,
+                "kegg_id": "",
+                "gpr_rule": rxn.gene_reaction_rule or "",
+                "DeltaG": None,
+                "tpm_value": 0.0,
+                "expr_bound": 0.0,
+                "final_lower_bound": float(final_lb),
+                "final_upper_bound": float(final_ub),
+            })
+            continue
 
         # ---------------------------------------------------------
         # (1) Compute TPM-derived expression bound
