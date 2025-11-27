@@ -20,7 +20,7 @@ import seaborn as sns
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from models.model_utils import simulate_with_objective, calculate_yield_metrics
+from models.model_utils import *
 
 # Set publication-quality plotting parameters
 plt.rcParams.update({
@@ -458,7 +458,7 @@ def main():
                         
                         # Calculate yield metrics only for successful simulations
                         if solution.status == 'optimal' and solution.objective_value > 1e-6:
-                            substrate_rxn = substrate_rxn_for_environment(env_name)
+                            substrate_rxn = get_substrate_rxn_for_environment(env_name)
                             yield_metrics = calculate_yield_metrics(solution, 'G1SAT', substrate_rxn, env_name)
                             
                             result = {
