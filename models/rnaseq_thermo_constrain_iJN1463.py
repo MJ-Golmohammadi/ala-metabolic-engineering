@@ -128,13 +128,65 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
         tpm_value = evaluate_gene_rule(rxn.gene_reaction_rule, expr_map)
         expr_bound = get_flux_bound_from_tpm(tpm_value)
 
+        # ---------------------------------------------------------
+        # ✅ CASE 1 — TPM = 0 → reaction fully off
+        # ---------------------------------------------------------
         if expr_bound == 0.0:
             final_lb, final_ub = 0.0, 0.0
             rid = None
+
         else:
             tpm_lb, tpm_ub = -expr_bound, expr_bound
 
-            # Use KEGG R-number from annotation if available
+            # ---------------------------------------------------------
+            # ✅ CASE 2 — EXCHANGE REACTIONS 
+            # ---------------------------------------------------------
+            if rxn.id.startswith("EX_"):
+                final_lb = -1e-9
+                final_ub = 1e-9
+
+                rxn.lower_bound = float(final_lb)
+                rxn.upper_bound = float(final_ub)
+
+                summary_rows.append({
+                    "reaction_id": rxn.id,
+                    "reaction_name": rxn.name,
+                    "kegg_id": "",
+                    "gpr_rule": rxn.gene_reaction_rule or "",
+                    "DeltaG": None,
+                    "tpm_value": float(tpm_value),
+                    "expr_bound": float(expr_bound),
+                    "final_lower_bound": float(final_lb),
+                    "final_upper_bound": float(final_ub),
+                })
+                continue  
+
+            # ---------------------------------------------------------
+            # ✅ CASE 3 — BIOMASS (must always stay open)
+            # ---------------------------------------------------------
+            if rxn.id == "BIOMASS_KT2440_WT3":
+                final_lb = 0.0
+                final_ub = 1000.0
+
+                rxn.lower_bound = final_lb
+                rxn.upper_bound = final_ub
+
+                summary_rows.append({
+                    "reaction_id": rxn.id,
+                    "reaction_name": rxn.name,
+                    "kegg_id": "",
+                    "gpr_rule": rxn.gene_reaction_rule or "",
+                    "DeltaG": None,
+                    "tpm_value": float(tpm_value),
+                    "expr_bound": float(expr_bound),
+                    "final_lower_bound": float(final_lb),
+                    "final_upper_bound": float(final_ub),
+                })
+                continue 
+
+            # ---------------------------------------------------------
+            # ✅ CASE 4 — NORMAL REACTIONS (TPM + ΔG constraints)
+            # ---------------------------------------------------------
             rid = None
             if "kegg.reaction" in rxn.annotation:
                 rid = rxn.annotation["kegg.reaction"]
@@ -147,36 +199,25 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
             else:
                 dg = None
                 lb_dg, ub_dg = 0.0, 50.0
-                
-            if rxn.reversibility:  # If the reaction is reversible, allow flux in both directions
+
+            if rxn.reversibility:
                 final_lb = max(lb_dg, tpm_lb)
                 final_ub = min(ub_dg, tpm_ub)
-                
-            elif dg is None or pd.isna(dg):    #If the reaction is irreversible, allow flux only in the forward direction
-                        # Note: Not all RNA transcripts are translated into functional proteins,
-                        # therefore raw expression values tend to overestimate actual enzymatic capacity.
-                        # In this specific case, the thermodynamic ΔG constraint is absent,
-                        # so we apply a conservative scaling factor (0.6) to RNA-derived bounds.
-                        # This adjustment ensures that only ~60% of the RNA synthesis signal
-                        # is considered valid for flux constraints in the model.
+
+            elif dg is None or pd.isna(dg):
                 final_lb = 0.0
                 final_ub = min(ub_dg, (tpm_ub * 0.6))
-                
-            else:
-              final_lb = 0.0
-              final_ub = min(ub_dg, tpm_ub) 
 
-            if rxn.id.startswith("EX_"):
-                final_lb = 1e-9
-                final_ub = 1e-9
-            
-            if rxn.id == "BIOMASS_KT2440_WT3":
+            else:
                 final_lb = 0.0
-                final_ub = 1000.0
-                    
+                final_ub = min(ub_dg, tpm_ub)
+
             if final_ub < final_lb:
                 final_lb, final_ub = -10.0, 10.0
 
+        # ---------------------------------------------------------
+        # ✅ APPLY FINAL BOUNDS
+        # ---------------------------------------------------------
         rxn.lower_bound = float(final_lb)
         rxn.upper_bound = float(final_ub)
 
@@ -199,6 +240,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
     pd.DataFrame(summary_rows).to_csv(out_csv, index=False)
 
     logging.info("Saved model and summary for %s", condition)
+
 
 # -----------------------------------------------------------------------------
 # Execution
