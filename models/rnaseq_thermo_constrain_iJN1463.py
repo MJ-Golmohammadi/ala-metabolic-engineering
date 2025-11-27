@@ -164,7 +164,15 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
                 
             else:
               final_lb = 0.0
-              final_ub = min(ub_dg, tpm_ub)  
+              final_ub = min(ub_dg, tpm_ub) 
+
+            if rxn.id.startswith("EX_"):
+                final_lb = 1e-9
+                final_ub = 1e-9
+            
+            if rxn.id == "BIOMASS_KT2440_WT3":
+                final_lb = 0.0
+                final_ub = 1000.0
                     
             if final_ub < final_lb:
                 final_lb, final_ub = -10.0, 10.0
