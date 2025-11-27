@@ -33,7 +33,7 @@ plt.rcParams.update({
     'figure.dpi': 300,
     'savefig.dpi': 300,
     'savefig.bbox': 'tight',
-    'font.family': 'Helvetica'
+    'font.family': 'DejaVu Sans'
 })
 
 def get_config_path() -> Path:
