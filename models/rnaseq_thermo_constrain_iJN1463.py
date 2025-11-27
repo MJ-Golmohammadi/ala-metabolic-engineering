@@ -125,95 +125,118 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
     summary_rows = []
 
     for rxn in model.reactions:
-        tpm_value = evaluate_gene_rule(rxn.gene_reaction_rule, expr_map)
-        expr_bound = get_flux_bound_from_tpm(tpm_value)
 
         # ---------------------------------------------------------
-        # ✅ CASE 1 — TPM = 0 → reaction fully off
+        # ✅ TPM-based expression bound
+        # ---------------------------------------------------------
+        tpm_value = evaluate_gene_rule(rxn.gene_reaction_rule, expr_map)
+        expr_bound = get_flux_bound_from_tpm(tpm_value)
+        tpm_lb, tpm_ub = -expr_bound, expr_bound
+
+        # ---------------------------------------------------------
+        # ✅ CASE 1 — EXCHANGE REACTIONS (must NOT be constrained)
+        # ---------------------------------------------------------
+        if rxn.id.startswith("EX_"):
+
+            if expr_bound == 0:
+                final_lb = -1e-9
+                final_ub =  1e-9
+            else:
+                final_lb = tpm_lb
+                final_ub = tpm_ub
+
+            rxn.lower_bound = float(final_lb)
+            rxn.upper_bound = float(final_ub)
+
+            summary_rows.append({
+                "reaction_id": rxn.id,
+                "reaction_name": rxn.name,
+                "kegg_id": "",
+                "gpr_rule": rxn.gene_reaction_rule or "",
+                "DeltaG": None,
+                "tpm_value": float(tpm_value),
+                "expr_bound": float(expr_bound),
+                "final_lower_bound": float(final_lb),
+                "final_upper_bound": float(final_ub),
+            })
+            continue  # ✅ VERY IMPORTANT
+
+        # ---------------------------------------------------------
+        # ✅ CASE 2 — BIOMASS (must always stay open)
+        # ---------------------------------------------------------
+        if rxn.id == "BIOMASS_KT2440_WT3":
+            final_lb = 0.0
+            final_ub = 1000.0
+
+            rxn.lower_bound = final_lb
+            rxn.upper_bound = final_ub
+
+            summary_rows.append({
+                "reaction_id": rxn.id,
+                "reaction_name": rxn.name,
+                "kegg_id": "",
+                "gpr_rule": rxn.gene_reaction_rule or "",
+                "DeltaG": None,
+                "tpm_value": float(tpm_value),
+                "expr_bound": float(expr_bound),
+                "final_lower_bound": float(final_lb),
+                "final_upper_bound": float(final_ub),
+            })
+            continue  # ✅ VERY IMPORTANT
+
+        # ---------------------------------------------------------
+        # ✅ CASE 3 — TPM = 0 → reaction fully off
         # ---------------------------------------------------------
         if expr_bound == 0.0:
             final_lb, final_ub = 0.0, 0.0
             rid = None
 
+            rxn.lower_bound = final_lb
+            rxn.upper_bound = final_ub
+
+            summary_rows.append({
+                "reaction_id": rxn.id,
+                "reaction_name": rxn.name,
+                "kegg_id": "",
+                "gpr_rule": rxn.gene_reaction_rule or "",
+                "DeltaG": None,
+                "tpm_value": float(tpm_value),
+                "expr_bound": float(expr_bound),
+                "final_lower_bound": float(final_lb),
+                "final_upper_bound": float(final_ub),
+            })
+            continue
+
+        # ---------------------------------------------------------
+        # ✅ CASE 4 — NORMAL REACTIONS (TPM + ΔG constraints)
+        # ---------------------------------------------------------
+        rid = None
+        if "kegg.reaction" in rxn.annotation:
+            rid = rxn.annotation["kegg.reaction"]
+            if isinstance(rid, list):
+                rid = rid[0]
+
+        if rid:
+            dg = dg_map.get(rid, None)
+            lb_dg, ub_dg = get_bounds_from_dg_file(rid, dg_map)
         else:
-            tpm_lb, tpm_ub = -expr_bound, expr_bound
+            dg = None
+            lb_dg, ub_dg = 0.0, 50.0
 
-            # ---------------------------------------------------------
-            # ✅ CASE 2 — EXCHANGE REACTIONS 
-            # ---------------------------------------------------------
-            if rxn.id.startswith("EX_"):
-                final_lb = -1e-9
-                final_ub = 1e-9
+        if rxn.reversibility:
+            final_lb = max(lb_dg, tpm_lb)
+            final_ub = min(ub_dg, tpm_ub)
 
-                rxn.lower_bound = float(final_lb)
-                rxn.upper_bound = float(final_ub)
+        elif dg is None or pd.isna(dg):
+            final_lb = 0.0
+            final_ub = min(ub_dg, (tpm_ub * 0.6))
 
-                summary_rows.append({
-                    "reaction_id": rxn.id,
-                    "reaction_name": rxn.name,
-                    "kegg_id": "",
-                    "gpr_rule": rxn.gene_reaction_rule or "",
-                    "DeltaG": None,
-                    "tpm_value": float(tpm_value),
-                    "expr_bound": float(expr_bound),
-                    "final_lower_bound": float(final_lb),
-                    "final_upper_bound": float(final_ub),
-                })
-                continue  
+        else:
+            final_lb = 0.0
+            final_ub = min(ub_dg, tpm_ub)
 
-            # ---------------------------------------------------------
-            # ✅ CASE 3 — BIOMASS (must always stay open)
-            # ---------------------------------------------------------
-            if rxn.id == "BIOMASS_KT2440_WT3":
-                final_lb = 0.0
-                final_ub = 1000.0
-
-                rxn.lower_bound = final_lb
-                rxn.upper_bound = final_ub
-
-                summary_rows.append({
-                    "reaction_id": rxn.id,
-                    "reaction_name": rxn.name,
-                    "kegg_id": "",
-                    "gpr_rule": rxn.gene_reaction_rule or "",
-                    "DeltaG": None,
-                    "tpm_value": float(tpm_value),
-                    "expr_bound": float(expr_bound),
-                    "final_lower_bound": float(final_lb),
-                    "final_upper_bound": float(final_ub),
-                })
-                continue 
-
-            # ---------------------------------------------------------
-            # ✅ CASE 4 — NORMAL REACTIONS (TPM + ΔG constraints)
-            # ---------------------------------------------------------
-            rid = None
-            if "kegg.reaction" in rxn.annotation:
-                rid = rxn.annotation["kegg.reaction"]
-                if isinstance(rid, list):
-                    rid = rid[0]
-
-            if rid:
-                dg = dg_map.get(rid, None)
-                lb_dg, ub_dg = get_bounds_from_dg_file(rid, dg_map)
-            else:
-                dg = None
-                lb_dg, ub_dg = 0.0, 50.0
-
-            if rxn.reversibility:
-                final_lb = max(lb_dg, tpm_lb)
-                final_ub = min(ub_dg, tpm_ub)
-
-            elif dg is None or pd.isna(dg):
-                final_lb = 0.0
-                final_ub = min(ub_dg, (tpm_ub * 0.6))
-
-            else:
-                final_lb = 0.0
-                final_ub = min(ub_dg, tpm_ub)
-
-            if final_ub < final_lb:
-                final_lb, final_ub = -10.0, 10.0
+        if final_ub < final_lb:
+            final_lb, final_ub = -10.0, 10.0
 
         # ---------------------------------------------------------
         # ✅ APPLY FINAL BOUNDS
