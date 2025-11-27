@@ -119,28 +119,30 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
     grouped = df_expr.groupby("Synonym")[expr_column].mean().dropna()
     expr_map = {str(k).lower(): float(v) for k, v in grouped.to_dict().items()}
 
+    # Load base model
     model = cobra.io.read_sbml_model(MODEL_PATH)
     logging.info("Model loaded: %d reactions", len(model.reactions))
 
     summary_rows = []
+    EPS = 1e-6   # Small epsilon to avoid hard zero-flux constraints (Option A)
 
     for rxn in model.reactions:
 
         # ---------------------------------------------------------
-        # ✅ TPM-based expression bound
+        # (1) Compute TPM-derived expression bound
         # ---------------------------------------------------------
         tpm_value = evaluate_gene_rule(rxn.gene_reaction_rule, expr_map)
         expr_bound = get_flux_bound_from_tpm(tpm_value)
         tpm_lb, tpm_ub = -expr_bound, expr_bound
 
         # ---------------------------------------------------------
-        # ✅ CASE 1 — EXCHANGE REACTIONS (must NOT be constrained)
+        # (2) Exchange reactions: do NOT apply thermodynamic or TPM shut‑down
+        #     These reactions define environmental availability and must remain open.
         # ---------------------------------------------------------
         if rxn.id.startswith("EX_"):
-
             if expr_bound == 0:
-                final_lb = -1e-9
-                final_ub =  1e-9
+                final_lb = -EPS
+                final_ub =  EPS
             else:
                 final_lb = tpm_lb
                 final_ub = tpm_ub
@@ -159,10 +161,10 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
                 "final_lower_bound": float(final_lb),
                 "final_upper_bound": float(final_ub),
             })
-            continue  # ✅ VERY IMPORTANT
+            continue
 
         # ---------------------------------------------------------
-        # ✅ CASE 2 — BIOMASS (must always stay open)
+        # (3) Biomass reaction: must remain fully open for growth simulation
         # ---------------------------------------------------------
         if rxn.id == "BIOMASS_KT2440_WT3":
             final_lb = 0.0
@@ -182,17 +184,22 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
                 "final_lower_bound": float(final_lb),
                 "final_upper_bound": float(final_ub),
             })
-            continue  # ✅ VERY IMPORTANT
+            continue
 
         # ---------------------------------------------------------
-        # ✅ CASE 3 — TPM = 0 → reaction fully off
+        # (4) TPM = 0 → apply soft‑zero constraint (ε), NOT hard zero
+        #     This prevents artificial pathway collapse while preserving RNA‑seq signal.
         # ---------------------------------------------------------
         if expr_bound == 0.0:
-            final_lb, final_ub = 0.0, 0.0
-            rid = None
+            if rxn.reversibility:
+                final_lb = -EPS
+                final_ub =  EPS
+            else:
+                final_lb = 0.0
+                final_ub = EPS
 
-            rxn.lower_bound = final_lb
-            rxn.upper_bound = final_ub
+            rxn.lower_bound = float(final_lb)
+            rxn.upper_bound = float(final_ub)
 
             summary_rows.append({
                 "reaction_id": rxn.id,
@@ -208,7 +215,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
             continue
 
         # ---------------------------------------------------------
-        # ✅ CASE 4 — NORMAL REACTIONS (TPM + ΔG constraints)
+        # (5) Apply thermodynamic ΔG constraints for reactions with KEGG IDs
         # ---------------------------------------------------------
         rid = None
         if "kegg.reaction" in rxn.annotation:
@@ -223,6 +230,9 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
             dg = None
             lb_dg, ub_dg = 0.0, 50.0
 
+        # ---------------------------------------------------------
+        # (6) Combine TPM and ΔG constraints
+        # ---------------------------------------------------------
         if rxn.reversibility:
             final_lb = max(lb_dg, tpm_lb)
             final_ub = min(ub_dg, tpm_ub)
@@ -235,11 +245,12 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
             final_lb = 0.0
             final_ub = min(ub_dg, tpm_ub)
 
+        # Safety check
         if final_ub < final_lb:
             final_lb, final_ub = -10.0, 10.0
 
         # ---------------------------------------------------------
-        # ✅ APPLY FINAL BOUNDS
+        # (7) Apply final bounds
         # ---------------------------------------------------------
         rxn.lower_bound = float(final_lb)
         rxn.upper_bound = float(final_ub)
@@ -256,13 +267,16 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
             "final_upper_bound": float(final_ub),
         })
 
+    # Save constrained model
     out_sbml = os.path.join(OUTPUT_DIR, f"iJN1463_{condition}_ExprThermoConstrainedFile.xml")
     cobra.io.write_sbml_model(model, out_sbml)
 
+    # Save summary table
     out_csv = os.path.join(OUTPUT_DIR, f"reaction_bounds_summary_{condition}.csv")
     pd.DataFrame(summary_rows).to_csv(out_csv, index=False)
 
     logging.info("Saved model and summary for %s", condition)
+
 
 
 # -----------------------------------------------------------------------------
