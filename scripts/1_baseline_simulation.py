@@ -458,7 +458,7 @@ def main():
                         
                         # Calculate yield metrics only for successful simulations
                         if solution.status == 'optimal' and solution.objective_value > 1e-6:
-                            substrate_rxn = get_substrate_rxn_for_environment(env_name)
+                            substrate_rxn = substrate_rxn_for_environment(env_name)
                             yield_metrics = calculate_yield_metrics(solution, 'G1SAT', substrate_rxn, env_name)
                             
                             result = {
