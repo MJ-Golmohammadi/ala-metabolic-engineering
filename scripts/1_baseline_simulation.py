@@ -49,8 +49,8 @@ def get_config_path() -> Path:
 def get_model_path(environment: str) -> Path:
     """Get absolute path to environment-specific model file with validation"""
     project_root = Path(__file__).parent.parent
-    model_filename = f"iJN1463_{environment}_ExprThermoConstrainedFile.xml"
-    model_path = project_root / "models" / "final_constrained_rnaseq_thermo" / model_filename
+    model_filename = f"iJN1463.xml"
+    model_path = project_root / "models" / model_filename
     
     if not model_path.exists():
         raise FileNotFoundError(f"❌ Model file not found for {environment}: {model_path}")
