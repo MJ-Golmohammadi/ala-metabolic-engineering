@@ -67,14 +67,11 @@ def create_engineered_strain(base_model: cobra.Model, modifications: Dict) -> co
 
 
 def simulate_with_objective(model: cobra.Model, objective: str, environment: Dict) -> cobra.Solution:
-    """
-    Perform FBA simulation with specified objective and environmental conditions
-    Enhanced for multiple environments
-    """
     with model:
         biomass_rxn = model.reactions.get_by_id('BIOMASS_KT2440_WT3')
         biomass_rxn.lower_bound = 0
         biomass_rxn.upper_bound = 1000  # Allow growth
+
         # Apply environmental constraints
         for rxn_id, bounds in environment.items():
             if rxn_id in model.reactions:
@@ -82,14 +79,25 @@ def simulate_with_objective(model: cobra.Model, objective: str, environment: Dic
                     model.reactions.get_by_id(rxn_id).bounds = bounds
                 except Exception as e:
                     logger.warning(f"Could not set bounds for {rxn_id}: {e}")
-        
+
+        # When maximizing ALA (G1SAT), cap biomass upper bound to its optimal value.
+        # This prevents unrealistic growth rates (>1 h⁻¹) that occur when product objective uncouples from biomass.
+
+        if objective == 'G1SAT':
+            # First compute biomass optimum
+            model.objective = biomass_rxn
+            sol_biomass = model.optimize()
+            biomass_opt = sol_biomass.objective_value if sol_biomass.status == 'optimal' else 1.0
+            # Cap biomass upper bound to realistic maximum
+            biomass_rxn.upper_bound = biomass_opt
+
         # Set objective function
         try:
             model.objective = objective
         except Exception as e:
             logger.error(f"Error setting objective {objective}: {e}")
             return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
-        
+
         # Perform flux balance analysis
         try:
             solution = model.optimize()
@@ -97,6 +105,7 @@ def simulate_with_objective(model: cobra.Model, objective: str, environment: Dic
         except Exception as e:
             logger.error(f"Optimization failed: {e}")
             return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
+
 
 
 def get_substrate_rxn_for_environment(environment: str) -> str:
