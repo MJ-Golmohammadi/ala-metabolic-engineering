@@ -33,7 +33,7 @@ plt.rcParams.update({
     'figure.dpi': 300,
     'savefig.dpi': 300,
     'savefig.bbox': 'tight',
-    'font.family': 'Arial'
+    'font.family': 'DejaVu Sans'
 })
 
 def get_config_path() -> Path:
@@ -147,13 +147,16 @@ def analyze_gene_essentiality(model: cobra.Model, environment: Dict,
         # Perform single gene deletion
         deletion_results = single_gene_deletion(model, target_genes)
         
-        for result in deletion_results:
+        # Iterate over DataFrame rows returned by single_gene_deletion
+        # Professional comment: COBRApy returns a pandas DataFrame, not a list of dicts
+        for gene_id, row in deletion_results.iterrows():
             essentiality_results.append({
-                'gene': result['ids'][0] if result['ids'] else 'unknown',
-                'growth_rate': result['growth'],
-                'status': 'essential' if result['growth'] < 0.01 else 'non_essential',
+                'gene': gene_id,  # Gene ID tested for essentiality
+                'growth_rate': row['growth'],  # Growth rate after deletion
+                'status': 'essential' if row['growth'] < 0.01 else 'non_essential',
                 'environment': 'Glu'  # Base environment for essentiality test
             })
+
     
     return pd.DataFrame(essentiality_results)
 
