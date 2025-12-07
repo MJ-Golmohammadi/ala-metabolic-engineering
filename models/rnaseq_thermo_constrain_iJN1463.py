@@ -176,10 +176,10 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
         if rxn.id.startswith("EX_"):
             if expr_bound == 0:
                 final_lb = -EPS
-                final_ub =  1000
+                final_ub =  EPS
             else:
                 final_lb = -EPS
-                final_ub = 1000
+                final_ub = EPS
 
             rxn.lower_bound = float(final_lb)
             rxn.upper_bound = float(final_ub)
