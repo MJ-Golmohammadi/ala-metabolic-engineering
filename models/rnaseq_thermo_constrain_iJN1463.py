@@ -35,6 +35,7 @@ CONDITIONS = {
 }
 
 FLUX_CAP = 6000
+GENERAL_SCALE = 10
 DG_SCALE1 = 100      # scaling factor for bounds
 DG_SCALE2 = 60
 
@@ -89,32 +90,23 @@ def get_bounds_from_dg_file(rxn_id: str, dg_map: dict):
     """
     dg = dg_map.get(rxn_id, None)
     if dg is None or pd.isna(dg):
-        return -FLUX_CAP, FLUX_CAP
+        return 0.0, FLUX_CAP
     dg = float(dg)
-    
-    if dg < -20.0:
-        ub = min(FLUX_CAP, int(abs(dg) * DG_SCALE1))
-        lb = -int(25 / math.sqrt(abs(dg)))
-        return float(lb), float(ub)
-    elif -20.0 <= dg < -5.0:
-        ub = min(FLUX_CAP, int(abs(dg) * DG_SCALE1))
-        lb = -int(30 / math.sqrt(abs(dg)))
-        return float(lb), float(ub)
+    if dg < -5.0:
+        ub = min(FLUX_CAP, int(abs(dg) * DG_SCALE1 * GENERAL_SCALE))
+        return 0.0, float(ub)
     elif -5.0 <= dg <= -1.0:
-        ub = int(abs(dg) * DG_SCALE2)
-        lb = int(35 / math.sqrt(abs(dg)))
-        return float(lb), float(ub)
+        ub = int(abs(dg) * DG_SCALE2 * GENERAL_SCALE)
+        return 0.0, float(ub)
     elif -1.0 < dg < 1.0:
         ub = 50
-        lb = -40
-        return float(lb), float(ub)
-    elif 1.0 <= dg <= 20.0:
-        ub = int(50 / math.sqrt(abs(dg)))
-        lb = -int(abs(dg) * 50)
-        return float(lb), float(ub)
+        return 0.0, float(ub)
+    elif 1.0 < dg <= 20.0:
+        ub = int((50 / math.sqrt(abs(dg))) * GENERAL_SCALE)
+        return 0.0, float(ub)
     else:
-        ub = 10.0
-        lb = -int(abs(dg) * 60)
+        ub = 100.0
+        lb = -100.0
         return float(lb), float(ub)
 
 # -----------------------------------------------------------------------------
@@ -139,8 +131,12 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
     "ICDHyr", "CS", "GAPD", "PGK", "PGI", "PFK",
     "FBA", "TPI", "G6PDH2r", "PGL", "GND",
     "RPE", "RPI", "TKT1", "TKT2", "TALA",
-    "GLUTRS", "GLUTRR", "G1SAT",
-    "PPC", "PPCK", "MDH", "FUM", "SUCOAS"
+    "PPC", "PPCK", "MDH", "FUM", "SUCOAS", "CYTBD", "CYTBO3", "NADH17pp", "NADH18pp",
+"PRPPS", "ADK1", "GMPS", "UMPK",
+"GLNS", "GLUDy", "ASNS1", "HIS4", "METB", "THRD_L",
+"PGSA", "PGPP", "CDS", "FABB", "FABC",
+"FOLR", "THMDPS", "HEMEt"
+
     }
 
     EPS = 1e-5   
@@ -148,8 +144,8 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
     for rxn in model.reactions:
 
         if rxn.id in ESSENTIAL_RXNS:
-            final_lb = -1000.0 if rxn.reversibility else 0.0
-            final_ub = 1000.0
+            final_lb = -1000.0 * GENERAL_SCALE if rxn.reversibility else 0.0
+            final_ub = 1000.0 * GENERAL_SCALE
             rxn.lower_bound = float(final_lb)
             rxn.upper_bound = float(final_ub)
 
@@ -206,7 +202,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
         # ---------------------------------------------------------
         if rxn.id == "BIOMASS_KT2440_WT3":
             final_lb = 0.0
-            final_ub = 1000.0
+            final_ub = 1000.0 * GENERAL_SCALE
 
             rxn.lower_bound = final_lb
             rxn.upper_bound = final_ub
@@ -230,8 +226,8 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
         # ---------------------------------------------------------
         if expr_bound == 0.0:
             if rxn.reversibility:
-                final_lb = -10
-                final_ub =  10
+                final_lb = -1 * GENERAL_SCALE
+                final_ub =  1 * GENERAL_SCALE
             else:
                 final_lb = 0.0
                 final_ub = 10
@@ -266,26 +262,26 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
             lb_dg, ub_dg = get_bounds_from_dg_file(rid, dg_map)
         else:
             dg = None
-            lb_dg, ub_dg = -50.0, 50.0
+            lb_dg, ub_dg = 0.0, 50.0 * GENERAL_SCALE
 
         # ---------------------------------------------------------
         # (6) Combine TPM and ΔG constraints
         # ---------------------------------------------------------
         if rxn.reversibility:
-            final_lb = max(lb_dg, tpm_lb)
-            final_ub = min(ub_dg, tpm_ub)
+            final_lb = max(lb_dg, tpm_lb * GENERAL_SCALE)
+            final_ub = min(ub_dg, tpm_ub * GENERAL_SCALE)
 
         elif dg is None or pd.isna(dg):
             final_lb = 0.0
-            final_ub = min(ub_dg, (tpm_ub * 0.6))
+            final_ub = min(ub_dg, (tpm_ub * 0.6 * GENERAL_SCALE))
 
         else:
             final_lb = 0.0
-            final_ub = min(ub_dg, tpm_ub)
+            final_ub = min(ub_dg, tpm_ub * GENERAL_SCALE)
 
         # Safety check
         if final_ub < final_lb:
-            final_lb, final_ub = -10.0, 10.0
+            final_lb, final_ub = -100.0, 100.0
 
         # ---------------------------------------------------------
         # (7) Apply final bounds
