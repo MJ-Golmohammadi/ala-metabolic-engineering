@@ -214,10 +214,19 @@ def create_multi_environment_summary(simulation_results: pd.DataFrame) -> plt.Fi
     for env in environments:
         env_data = ala_data[ala_data['environment'] == env]
         if len(env_data) > 0:
-            efficiency = (env_data['ala_flux_net'].mean() / env_data['growth_rate'].mean()) 
+            ala_mean = env_data['ala_flux_net'].mean()
+            growth_mean = env_data['growth_rate'].mean()
+            
+            if growth_mean is not None and growth_mean > 1e-9:
+                # Efficiency defined as ALA flux per unit growth.
+                # Guard against division by zero when growth_mean ≈ 0 to prevent invalid values.
+                efficiency = ala_mean / growth_mean
+            else:
+                efficiency = float('nan')  # or 0.0 if you prefer to treat no-growth as zero efficiency
             efficiencies.append(efficiency)
         else:
-            efficiencies.append(0)
+            efficiencies.append(0.0)
+
     
     ax4.bar(environments, efficiencies, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'], alpha=0.8)
     ax4.set_ylabel('Production Efficiency (ALA/Growth)', fontweight='bold')
