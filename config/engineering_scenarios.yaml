@@ -8,8 +8,8 @@ environments:
   
   # Glucose: C6H12O6 → 6 carbon atoms
   Glu:
-    EX_glc__D_e: [-1.0, 1000.0]     # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
-    EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
+    EX_glc__D_e: [-10.0, 1000.0]     # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_o2_e: [-200.0, 1000.0]        # Oxygen uptake
     EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake  
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
     EX_so4_e: [-2.0, 1000.0]        # Sulfate uptake
@@ -24,8 +24,8 @@ environments:
 
   # Citrate: C6H8O7 → 6 carbon atoms  
   Cit:
-    EX_cit_e: [-1.0, 1000.0]        # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
-    EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
+    EX_cit_e: [-10.0, 1000.0]        # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_o2_e: [-200.0, 1000.0]        # Oxygen uptake
     EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
     EX_so4_e: [-2.0, 1000.0]        # Sulfate uptake
@@ -40,8 +40,8 @@ environments:
 
   # Serine: C3H7NO3 → 3 carbon atoms
   Ser:
-    EX_ser__L_e: [-2.0, 1000.0]     # 2.0 mmol/gDW/h = 6 mmol C/gDW/h
-    EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
+    EX_ser__L_e: [-20.0, 1000.0]     # 2.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_o2_e: [-200.0, 1000.0]        # Oxygen uptake
     EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
     EX_so4_e: [-2.0, 1000.0]        # Sulfate uptake
