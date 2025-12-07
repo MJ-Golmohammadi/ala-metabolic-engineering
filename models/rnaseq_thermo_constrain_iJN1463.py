@@ -218,11 +218,11 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
         # ---------------------------------------------------------
         if expr_bound == 0.0:
             if rxn.reversibility:
-                final_lb = -EPS
-                final_ub =  EPS
+                final_lb = -10
+                final_ub =  10
             else:
                 final_lb = 0.0
-                final_ub = EPS
+                final_ub = 10
 
             rxn.lower_bound = float(final_lb)
             rxn.upper_bound = float(final_ub)
