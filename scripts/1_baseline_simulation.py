@@ -51,7 +51,7 @@ def get_model_path(environment: str) -> Path:
     project_root = Path(__file__).parent.parent
     model_filename = f"iJN1463_{environment}_ExprThermoConstrainedFile.xml"
     model_path = project_root / "models" / "final_constrained_rnaseq_thermo" / model_filename
-    
+    model.solver = "glpk"
     if not model_path.exists():
         raise FileNotFoundError(f"❌ Model file not found for {environment}: {model_path}")
     
