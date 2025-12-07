@@ -89,23 +89,32 @@ def get_bounds_from_dg_file(rxn_id: str, dg_map: dict):
     """
     dg = dg_map.get(rxn_id, None)
     if dg is None or pd.isna(dg):
-        return 0.0, FLUX_CAP
+        return -FLUX_CAP, FLUX_CAP
     dg = float(dg)
-    if dg < -5.0:
+    
+    if dg < -20.0:
         ub = min(FLUX_CAP, int(abs(dg) * DG_SCALE1))
-        return 0.0, float(ub)
+        lb = -int(25 / math.sqrt(abs(dg)))
+        return float(lb), float(ub)
+    elif -20.0 <= dg < -5.0:
+        ub = min(FLUX_CAP, int(abs(dg) * DG_SCALE1))
+        lb = -int(30 / math.sqrt(abs(dg)))
+        return float(lb), float(ub)
     elif -5.0 <= dg <= -1.0:
         ub = int(abs(dg) * DG_SCALE2)
-        return 0.0, float(ub)
+        lb = int(35 / math.sqrt(abs(dg)))
+        return float(lb), float(ub)
     elif -1.0 < dg < 1.0:
         ub = 50
-        return 0.0, float(ub)
-    elif 1.0 < dg <= 20.0:
+        lb = -40
+        return float(lb), float(ub)
+    elif 1.0 <= dg <= 20.0:
         ub = int(50 / math.sqrt(abs(dg)))
-        return 0.0, float(ub)
+        lb = -int(abs(dg) * 50)
+        return float(lb), float(ub)
     else:
         ub = 10.0
-        lb = -10.0
+        lb = -int(abs(dg) * 60)
         return float(lb), float(ub)
 
 # -----------------------------------------------------------------------------
@@ -126,9 +135,12 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
     summary_rows = []
 
     ESSENTIAL_RXNS = {
-        "ACONIs", "ATPS4r", "ATPM", "PDH", "NADH16pp",
-        "ICDHyr", "CS", "GAPD", "PGK",
-        "GLUTRS", "GLUTRR", "G1SAT"
+    "ACONIs", "ATPS4r", "ATPM", "PDH", "NADH16pp",
+    "ICDHyr", "CS", "GAPD", "PGK", "PGI", "PFK",
+    "FBA", "TPI", "G6PDH2r", "PGL", "GND",
+    "RPE", "RPI", "TKT1", "TKT2", "TALA",
+    "GLUTRS", "GLUTRR", "G1SAT",
+    "PPC", "PPCK", "MDH", "FUM", "SUCOAS"
     }
 
     EPS = 1e-5   
@@ -254,7 +266,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict):
             lb_dg, ub_dg = get_bounds_from_dg_file(rid, dg_map)
         else:
             dg = None
-            lb_dg, ub_dg = 0.0, 50.0
+            lb_dg, ub_dg = -50.0, 50.0
 
         # ---------------------------------------------------------
         # (6) Combine TPM and ΔG constraints
