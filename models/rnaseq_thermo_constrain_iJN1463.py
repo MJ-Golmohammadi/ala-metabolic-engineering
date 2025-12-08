@@ -111,7 +111,7 @@ def load_essential_map(csv_path):
         return essential_map
 
     try:
-        df_e = pd.read_csv(csv_path)
+        df_e = pd.read_csv(csv_path, sep=";")
     except Exception as e:
         logging.warning("Failed to read essential CSV %s: %s", csv_path, e)
         return essential_map
