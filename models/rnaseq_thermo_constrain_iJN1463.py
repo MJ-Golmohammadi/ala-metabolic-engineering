@@ -50,7 +50,7 @@ CONDITIONS = {
 }
 
 FLUX_CAP = 6000
-GENERAL_SCALE = 10
+GENERAL_SCALE = 1000
 DG_SCALE1 = 100      # scaling factor for bounds
 DG_SCALE2 = 60
 
