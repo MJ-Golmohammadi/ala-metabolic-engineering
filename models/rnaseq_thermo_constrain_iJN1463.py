@@ -301,7 +301,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
         if rxn.id.startswith("EX_"):
             # Keep a small epsilon to avoid strict zero blocking in some solvers
             final_lb = -EPS
-            final_ub = 1000.0
+            final_ub = 999_999
             rxn.lower_bound = float(final_lb)
             rxn.upper_bound = float(final_ub)
 
@@ -323,7 +323,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
         # ---------------------------------------------------------
         if rxn.id == "BIOMASS_KT2440_WT3":
             final_lb = 0.0
-            final_ub = 1000.0 * GENERAL_SCALE
+            final_ub = 999_999
             rxn.lower_bound = final_lb
             rxn.upper_bound = final_ub
 
