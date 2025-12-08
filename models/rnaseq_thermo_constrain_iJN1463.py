@@ -253,6 +253,11 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
     EPS = 1e-5
 
     for rxn in model.reactions:
+        model.reactions.get_by_id("EX_glc__D_e").lower_bound = -10
+        model.reactions.get_by_id("EX_o2_e").lower_bound = -20
+        model.reactions.get_by_id("EX_nh4_e").lower_bound = -10
+        model.reactions.get_by_id("EX_pi_e").lower_bound = -5
+        model.reactions.get_by_id("EX_so4_e").lower_bound = -2
 
         # -----------------------------------------------------------------
         # (A) If reaction is listed as essential in CSV, apply provided bounds
