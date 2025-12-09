@@ -295,7 +295,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
         # ---------------------------------------------------------
         if rxn.id.startswith("EX_"):
             # Keep a small epsilon to avoid strict zero blocking in some solvers
-            final_lb = -EPS
+            final_lb = -5
             final_ub = 999_999
             rxn.lower_bound = float(final_lb)
             rxn.upper_bound = float(final_ub)
