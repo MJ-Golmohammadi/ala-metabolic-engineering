@@ -236,6 +236,56 @@ def create_multi_environment_summary(simulation_results: pd.DataFrame) -> plt.Fi
     plt.tight_layout()
     return fig
 
+def optimize_max_ala_with_min_growth(
+    model,
+    ala_obj_id: str = "G1SAT",                # Reaction ID for ALA production
+    biomass_id: str = "BIOMASS_KT2440_WT3",   # Reaction ID for biomass growth
+    b_min_fraction: float = 0.01              # Fraction of reference growth to enforce
+):
+    """
+    Optimize ALA production while enforcing a minimum biomass growth (ε-constraint).
+
+    Parameters
+    ----------
+    model : cobra.Model
+        The metabolic model to optimize.
+    ala_obj_id : str
+        Reaction ID for ALA production (default: "G1SAT").
+    biomass_id : str
+        Reaction ID for biomass growth (default: "BIOMASS_KT2440_WT3").
+    b_min_fraction : float
+        Fraction of reference biomass growth to enforce as a minimum (default: 0.01 = 1%).
+
+    Returns
+    -------
+    cobra.Solution
+        Solution object with ALA maximized subject to minimal growth constraint.
+    """
+
+    # Step 1: Compute reference growth under biomass objective
+    with model:
+        model.objective = biomass_id
+        ref_solution = model.optimize()
+        ref_growth = max(0.0, float(ref_solution.fluxes.get(biomass_id, 0.0)))
+
+    # Step 2: Define minimum growth requirement (ε-constraint)
+    b_min = b_min_fraction * ref_growth
+
+    # Step 3: Apply growth lower bound
+    biomass_rxn = model.reactions.get_by_id(biomass_id)
+    prev_lb = biomass_rxn.lower_bound
+    biomass_rxn.lower_bound = max(prev_lb, b_min)
+
+    # Step 4: Optimize for ALA production
+    model.objective = ala_obj_id
+    solution = model.optimize()
+
+    # Step 5: Restore original biomass lower bound
+    biomass_rxn.lower_bound = prev_lb
+
+    return solution
+
+
 def main():
     """
     Execute comprehensive multi-environment baseline simulations with advanced analyses
