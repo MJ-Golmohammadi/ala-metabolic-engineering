@@ -240,43 +240,40 @@ def main():
     """
     Execute comprehensive multi-environment baseline simulations with advanced analyses
     """
-    
     try:
-        config_path = get_config_path()
-        
         # Load configuration
+        config_path = get_config_path()
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
-        
+
         print("🚀 Starting comprehensive multi-environment analysis...")
-        
+
         # Initialize results storage
         all_simulation_results = []
         sensitivity_results = []
         essentiality_results = []
-        
-        # Analyze all four environments
+
+        # Environments to analyze
         environments_to_analyze = ['Glu', 'Cit', 'Ser', 'Fer']
-        
+
         for env_name in environments_to_analyze:
             print(f"\n📊 Analyzing environment: {env_name}")
-            
             try:
                 # Load environment-specific model
                 model_path = get_model_path(env_name)
                 model = cobra.io.read_sbml_model(str(model_path))
                 model.solver = "glpk"
+
                 # Get environment configuration
                 environment_config = config['environments'].get(env_name, config['environments']['Glu'])
-                
-                # Perform baseline simulations
+
+                # Run baseline simulations for each objective
                 for obj_name, objective in config['objectives'].items():
                     print(f"  Running objective: {obj_name}")
-                    
                     try:
                         solution = simulate_with_objective(model, objective, environment_config)
-                        
-                        # Calculate yield metrics
+
+                        # Select substrate exchange reaction
                         if env_name == 'Glu':
                             substrate_rxn = 'EX_glc__D_e'
                         elif env_name == 'Cit':
@@ -287,15 +284,22 @@ def main():
                             substrate_rxn = 'EX_fer_e'
                         else:
                             substrate_rxn = 'EX_glc__D_e'
-                            
+
+                        # Calculate yield metrics
                         yield_metrics = calculate_yield_metrics(solution, 'G1SAT', substrate_rxn)
-                        
+
+                        # Growth always from biomass flux
+                        growth_flux = float(solution.fluxes.get('BIOMASS_KT2440_WT3', 0.0))
+                        ala_flux_gross = float(solution.fluxes.get('G1SAT', 0.0))
+                        ala_flux_net = yield_metrics['net_ala_flux']
+
+                        # Build result dictionary
                         result = {
                             'environment': env_name,
                             'objective': obj_name,
-                            'growth_rate': solution.objective_value,
-                            'ala_flux': solution.fluxes.get('G1SAT', 0),
-                            'ala_flux_net': yield_metrics['net_ala_flux'],
+                            'growth_rate': growth_flux,
+                            'ala_flux': ala_flux_gross,
+                            'ala_flux_net': ala_flux_net,
                             'ala_consumption': yield_metrics['ala_consumption_flux'],
                             'solution_status': solution.status,
                             'modifications': 'wild_type',
@@ -305,13 +309,16 @@ def main():
                             'carbon_yield': yield_metrics['carbon_yield'],
                             'substrate_uptake': yield_metrics['substrate_uptake']
                         }
-                        
                         all_simulation_results.append(result)
-                        print(f"    ✅ {obj_name}: Growth = {solution.objective_value:.4f}, ALA = {yield_metrics['net_ala_flux']:.4f}")
-                        
+
+                        # Print results clearly
+                        if obj_name == "max_biomass":
+                            print(f"    ✅ {obj_name}: Growth = {growth_flux:.4f}, ALA_net = {ala_flux_net:.4f}")
+                        elif obj_name == "max_ala":
+                            print(f"    ✅ {obj_name}: Growth = {growth_flux:.4f}, ALA_net = {ala_flux_net:.4f} (ALA_gross = {ala_flux_gross:.4f})")
+
                     except Exception as e:
                         print(f"    ❌ Simulation failed: {e}")
-                        # Store failed simulation
                         all_simulation_results.append({
                             'environment': env_name,
                             'objective': obj_name,
@@ -327,82 +334,74 @@ def main():
                             'carbon_yield': 0,
                             'substrate_uptake': 0
                         })
-                
-                # Perform sensitivity analysis for glucose environment
+
+                # Sensitivity analysis only for glucose environment
                 if env_name == 'Glu':
                     print("  🔍 Performing sensitivity analysis...")
                     sens_results = perform_sensitivity_analysis(model, environment_config)
                     sensitivity_results.append(sens_results)
-                
-                # Perform gene essentiality analysis
+
+                # Gene essentiality analysis
                 print("  🧬 Performing gene essentiality analysis...")
                 ess_results = analyze_gene_essentiality(model, environment_config)
                 essentiality_results.append(ess_results)
-                
+
             except Exception as e:
                 print(f"❌ Error analyzing environment {env_name}: {e}")
                 continue
-        
-        # Save all results
+
+        # Save results
         results_dir = Path(__file__).parent.parent / "results" / "tables"
         results_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save simulation results
+
         results_df = pd.DataFrame(all_simulation_results)
-        results_path = results_dir / "enhanced_baseline_simulations.csv"
-        results_df.to_csv(results_path, index=False)
-        
-        # Save sensitivity results
+        results_df.to_csv(results_dir / "enhanced_baseline_simulations.csv", index=False)
+
         if sensitivity_results:
             sens_df = pd.concat(sensitivity_results, ignore_index=True)
             sens_df.to_csv(results_dir / "sensitivity_analysis.csv", index=False)
-        
-        # Save essentiality results
+
         if essentiality_results:
             ess_df = pd.concat(essentiality_results, ignore_index=True)
             ess_df.to_csv(results_dir / "gene_essentiality.csv", index=False)
-        
+
         # Create and save summary visualization
         print("\n📈 Creating comprehensive visualizations...")
         summary_fig = create_multi_environment_summary(results_df)
         figures_dir = Path(__file__).parent.parent / "results" / "figures"
         figures_dir.mkdir(parents=True, exist_ok=True)
         summary_fig.savefig(figures_dir / "multi_environment_summary.png", dpi=300, bbox_inches='tight')
-        
-        # Print comprehensive summary
+
+        # Print summary statistics
         print("\n" + "="*80)
         print("COMPREHENSIVE MULTI-ENVIRONMENT ANALYSIS SUMMARY")
         print("="*80)
-        
-        # Performance summary by environment
+
         production_data = results_df[results_df['objective'] == 'max_biomass']
         summary_stats = production_data.groupby('environment').agg({
             'growth_rate': ['mean', 'std'],
             'ala_flux_net': ['mean', 'std'],
             'yield_mmol_g': ['mean', 'std']
         }).round(4)
-        
+
         print("\n📊 Performance Summary by Environment:")
         print(summary_stats)
-        
-        # Identify optimal environment
+
         best_ala_env = production_data.loc[production_data['ala_flux_net'].idxmax()]
         best_growth_env = production_data.loc[production_data['growth_rate'].idxmax()]
         best_yield_env = production_data.loc[production_data['yield_mmol_g'].idxmax()]
-        
+
         print(f"\n🏆 Optimal Conditions:")
-        print(f"  Highest ALA Production: {best_ala_env['environment']} "
-              f"({best_ala_env['ala_flux_net']:.4f} mmol/gDW/h)")
-        print(f"  Highest Growth: {best_growth_env['environment']} "
-              f"({best_growth_env['growth_rate']:.4f} h⁻¹)")
-        print(f"  Highest Yield: {best_yield_env['environment']} "
-              f"({best_yield_env['yield_mmol_g']:.4f} mmol/mmol)")
-        
+        print(f"  Highest ALA Production: {best_ala_env['environment']} ({best_ala_env['ala_flux_net']:.4f} mmol/gDW/h)")
+        print(f"  Highest Growth: {best_growth_env['environment']} ({best_growth_env['growth_rate']:.4f} h⁻¹)")
+        print(f"  Highest Yield: {best_yield_env['environment']} ({best_yield_env['yield_mmol_g']:.4f} mmol/mmol)")
+
         print("\n✅ Enhanced baseline analysis completed successfully!")
-        
+
     except Exception as e:
         print(f"❌ Critical error in main execution: {e}")
         raise
+
 
 if __name__ == "__main__":
     main()
