@@ -364,7 +364,7 @@ def build_models_from_multi_env_csv(
 # -------------------------
 if __name__ == "__main__":
     project_root = Path(__file__).parent
-    model_path = project_root / "models" / "iJN1463.xml"
+    model_path = project_root / "iJN1463.xml"
     rnaseq_csv_path = project_root / "expression_txt_files" / "merged_expression.csv"
     output_dir = project_root / "models" / "context_specific"
     diagnostics = build_models_from_multi_env_csv(
