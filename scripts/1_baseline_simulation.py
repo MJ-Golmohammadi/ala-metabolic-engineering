@@ -240,7 +240,7 @@ def optimize_max_ala_with_min_growth(
     model,
     ala_obj_id: str = "G1SAT",                # Reaction ID for ALA production
     biomass_id: str = "BIOMASS_KT2440_WT3",   # Reaction ID for biomass growth
-    b_min_fraction: float = 0.01              # Fraction of reference growth to enforce
+    b_min_fraction: float = 0.001              # Fraction of reference growth to enforce
 ):
     """
     Optimize ALA production while enforcing a minimum biomass growth (ε-constraint).
