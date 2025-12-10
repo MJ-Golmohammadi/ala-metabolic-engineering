@@ -119,7 +119,7 @@ def apply_eflux_scaling_with_lb(
         ub_scaled = ub_min + norm * (ub_max - ub_min)
         if ub_scaled < eps:
             ub_scaled = eps
-
+        
         # apply rules based on reversibility and original bounds
         if rxn.reversibility:
             rxn.lower_bound = -ub_scaled
@@ -128,22 +128,29 @@ def apply_eflux_scaling_with_lb(
             orig_lb, orig_ub = original_bounds[rxn.id]
             # irreversible forward (orig_lb >= 0)
             if orig_lb >= 0:
-                if ub_scaled <= eps or orig_ub == 0:
+                if orig_ub == 0 or ub_scaled <= eps:
                     rxn.lower_bound = 0.0
                     rxn.upper_bound = eps
                 else:
                     rxn.lower_bound = max(orig_lb, eps)
                     rxn.upper_bound = ub_scaled
-
             # irreversible backward (orig_ub <= 0)
             elif orig_ub <= 0:
-                # keep negative direction, set ub to small negative and lb to -ub_scaled
-                rxn.upper_bound = min(orig_ub, -eps)
-                rxn.lower_bound = -ub_scaled
+                if ub_scaled <= eps:
+                    rxn.lower_bound = 0.0
+                    rxn.upper_bound = eps
+                else:
+                    rxn.upper_bound = min(orig_ub, -eps)
+                    rxn.lower_bound = -ub_scaled
             else:
                 # fallback: keep original lb sign, set ub scaled
                 rxn.lower_bound = orig_lb
                 rxn.upper_bound = ub_scaled
+        
+        # general check
+        if rxn.lower_bound > rxn.upper_bound:
+            rxn.lower_bound = rxn.upper_bound
+
 
         changed_rxns.append(rxn.id)
 
