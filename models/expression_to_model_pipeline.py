@@ -128,8 +128,13 @@ def apply_eflux_scaling_with_lb(
             orig_lb, orig_ub = original_bounds[rxn.id]
             # irreversible forward (orig_lb >= 0)
             if orig_lb >= 0:
-                rxn.lower_bound = max(orig_lb, eps)
-                rxn.upper_bound = ub_scaled
+                if ub_scaled <= eps or orig_ub == 0:
+                    rxn.lower_bound = 0.0
+                    rxn.upper_bound = eps
+                else:
+                    rxn.lower_bound = max(orig_lb, eps)
+                    rxn.upper_bound = ub_scaled
+
             # irreversible backward (orig_ub <= 0)
             elif orig_ub <= 0:
                 # keep negative direction, set ub to small negative and lb to -ub_scaled
