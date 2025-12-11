@@ -46,10 +46,19 @@ def adjust_bounds(model):
     original_bounds = {}
     for r in model.reactions:
         original_bounds[r.id] = (float(r.lower_bound), float(r.upper_bound))
-        if r.id in special_other_bounds:
+        if r.id == "ATPM":
+            # مقدار ثابت 5 mmol/gDW/h
+            r.lower_bound = 5.0
+            r.upper_bound = 5.0
+        elif r.id in special_other_bounds:
             lb, ub = special_other_bounds[r.id]
-            r.lower_bound = float(lb)
-            r.upper_bound = float(ub)
+            # اگر lb > ub شد، هر دو را برابر lb بگذار
+            if lb > ub:
+                r.lower_bound = lb
+                r.upper_bound = lb
+            else:
+                r.lower_bound = float(lb)
+                r.upper_bound = float(ub)
         elif r.id.startswith("EX_"):
             if r.id in special_ex_bounds:
                 lb, ub = special_ex_bounds[r.id]
