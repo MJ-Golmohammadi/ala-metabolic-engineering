@@ -96,7 +96,7 @@ def map_expression_to_reactions(model: Model, gene_expression: pd.Series) -> Dic
 def apply_eflux_scaling_with_lb(
     model: Model,
     rxn_scores: Dict[str, float],
-    ub_max: float = 1000.0,
+    ub_max: float = 100000.0,
     ub_min_fraction: float = 0.01,
     eps: float = 1e-6,
     whitelist_rxns: Optional[List[str]] = None,
@@ -293,7 +293,7 @@ def build_context_specific_model_from_rnaseq_single_env(
     model: Model,
     rnaseq_counts: pd.Series,
     biomass_rxn_id: str = "BIOMASS_KT2440_WT3",
-    ub_max: float = 1000.0,
+    ub_max: float = 100000.0,
     ub_min_fraction: float = 0.01,
     eps: float = 1e-6,
     processes_for_deletion: int = 4,
@@ -314,13 +314,13 @@ def build_context_specific_model_from_rnaseq_single_env(
 
     if env_bounds is None:
         env_bounds = {
-            "EX_glc__D_e": (-10.0, 1000.0),
-            "EX_nh4_e": (-10.0, 1000.0),
-            "EX_pi_e": (-10.0, 1000.0),
-            "EX_so4_e": (-10.0, 1000.0),
-            "EX_o2_e": (-20.0, 1000.0),
-            "EX_h2o_e": (-1000.0, 1000.0),
-            "EX_co2_e": (-1000.0, 1000.0)
+            "EX_glc__D_e": (-10.0, 100000.0),
+            "EX_nh4_e": (-10.0, 100000.0),
+            "EX_pi_e": (-10.0, 100000.0),
+            "EX_so4_e": (-10.0, 100000.0),
+            "EX_o2_e": (-20.0, 100000.0),
+            "EX_h2o_e": (-100000.0, 100000.0),
+            "EX_co2_e": (-100000.0, 100000.0)
         }
     for rxn_id, (lb, ub) in env_bounds.items():
         if rxn_id in m.reactions:
@@ -374,12 +374,12 @@ def build_context_specific_model_from_rnaseq_single_env(
     if "ATPM" in scaled_model.reactions:
         a = scaled_model.reactions.get_by_id("ATPM")
         a.lower_bound = 0.0
-        a.upper_bound = 1000.0
+        a.upper_bound = 100000.0
     for rxn_id, lb in [("EX_glc__D_e", -10.0), ("EX_o2_e", -20.0), ("EX_nh4_e", -10.0), ("EX_pi_e", -10.0), ("EX_so4_e", -10.0)]:
         if rxn_id in scaled_model.reactions:
             r = scaled_model.reactions.get_by_id(rxn_id)
             r.lower_bound = float(lb)
-            r.upper_bound = 1000.0
+            r.upper_bound = 100000.0
 
     diagnostics: Dict = {}
     # test feasibility and run rollback if needed
@@ -443,7 +443,7 @@ def build_models_from_multi_env_csv(
     biomass_rxn_id: str = "BIOMASS_KT2440_WT3",
     env_columns: Dict[str, str] = None,
     sep: str = ';',
-    ub_max: float = 1000.0,
+    ub_max: float = 100000.0,
     ub_min_fraction: float = 0.01,
     eps: float = 1e-6,
     processes_for_deletion: int = 4,
@@ -504,7 +504,7 @@ if __name__ == "__main__":
         biomass_rxn_id="BIOMASS_KT2440_WT3",
         env_columns={'Glu':'Expression_Glu', 'Cit':'Expression_Cit', 'Fer':'Expression_Fer', 'Ser':'Expression_Ser'},
         sep=';',
-        ub_max=1000.0,
+        ub_max=100000.0,
         ub_min_fraction=0.01,
         eps=1e-6,
         processes_for_deletion=4,
