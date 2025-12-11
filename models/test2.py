@@ -6,17 +6,23 @@ adjusted_model.objective = "BIOMASS_KT2440_WT3"
 m = adjusted_model
 eps = 1e-6
 
-# لیست کامل tiny/equality
-tiny = [(r.id, float(r.lower_bound), float(r.upper_bound)) 
-        for r in m.reactions if abs(float(r.upper_bound)-float(r.lower_bound)) <= 1e-6]
-print("tiny count:", len(tiny))
-print(tiny[:100])
-
-# باز کردن 20 واکنش اول tiny به بازه معقول
-for rxn_id, lb, ub in tiny[:20]:
-    r = m.reactions.get_by_id(rxn_id)
-    r.lower_bound = -1000.0 if lb < 0 else 0.0
-    r.upper_bound = 1000.0
+# باز کردن امن برای شش واکنش
+safe_bounds = {
+    'CUt2pp': (-10.0, 1000.0),
+    'HVCD': (-1000.0, 1000.0),
+    'VCACT': (-1000.0, 1000.0),
+    'PIt7ipp': (0.0, 1000.0),
+    'SK_pqqA_kt_c': (-10.0, 1000.0),
+    'ATPM': (0.0, 1000.0)
+}
+for rxn_id, (lb, ub) in safe_bounds.items():
+    if rxn_id in m.reactions:
+        r = m.reactions.get_by_id(rxn_id)
+        r.lower_bound = float(lb)
+        r.upper_bound = float(ub)
+        print("opened", rxn_id, "->", r.lower_bound, r.upper_bound)
 m.objective = "BIOMASS_KT2440_WT3"
-print("status after opening tiny batch:", m.optimize().status, m.optimize().objective_value)
+sol = m.optimize()
+print("status after safe open:", sol.status, sol.objective_value)
+
 
