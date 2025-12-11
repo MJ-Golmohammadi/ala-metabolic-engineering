@@ -1,17 +1,22 @@
-# expression_to_model_pipeline_v3.py
+# expression_to_model_pipeline_v3_fixed.py
 """
-Pipeline v3: E-Flux scaling with LB adjustment
+Pipeline v3 Fixed: E-Flux scaling with LB adjustment and SBML write fix
 - multi-environment CSV input (semicolon separated)
 - detect essential reactions via single_reaction_deletion
 - apply E-Flux scaling that adjusts both UB and LB for internal reactions
 - EX_ reactions are controlled only via YAML environment files (not by RNA-seq)
 - optional pyTFA thermodynamic curation
 - outputs: one SBML per environment + diagnostics JSON
+Fixes:
+- ensure median_ratio_normalization handles empty rows without NaN propagation
+- ensure reversibility flags are plain Python bool before writing SBML
+- numeric and type safety checks for bounds
 """
 
 import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import json
 
 import numpy as np
 import pandas as pd
@@ -19,24 +24,45 @@ import cobra
 from cobra import Model, Reaction
 from cobra.flux_analysis import single_reaction_deletion
 
+# Optional pyTFA
+try:
+    import pytfa
+    from pytfa.io import load_thermoDB
+    PYTFA_AVAILABLE = True
+except Exception:
+    PYTFA_AVAILABLE = False
 
 # -------------------------
 # Normalization helpers
 # -------------------------
 def median_ratio_normalization(counts_df: pd.DataFrame) -> pd.Series:
-    with np.errstate(divide='ignore'):
-        geom_means = counts_df.replace(0, np.nan).apply(lambda x: np.exp(np.nanmean(np.log(x))), axis=1)
-    geom_means[geom_means == 0] = np.nan
+    """
+    DESeq2-like median ratio normalization with robust handling of zero rows.
+    Returns a Series when single column, otherwise DataFrame-like normalized.
+    """
+    with np.errstate(divide='ignore', invalid='ignore'):
+        # compute geometric means per gene (row), ignoring zeros
+        def geom_mean_row(x):
+            x_nonzero = x.replace(0, np.nan).astype(float)
+            if x_nonzero.isna().all():
+                return np.nan
+            return float(np.exp(np.nanmean(np.log(x_nonzero))))
+        geom_means = counts_df.apply(geom_mean_row, axis=1)
+    # replace NaN geometric means with 1.0 to avoid division by zero
+    geom_means = geom_means.fillna(1.0)
+    # compute ratios and size factors
     ratios = counts_df.div(geom_means, axis=0)
     size_factors = ratios.median(axis=0)
+    # if any size factor is zero or NaN, replace with 1.0
+    size_factors = size_factors.replace(0, np.nan).fillna(1.0)
     normalized = counts_df.div(size_factors, axis=1)
     if normalized.shape[1] == 1:
         return normalized.iloc[:, 0]
     return normalized
 
 def counts_to_cpm(counts: pd.Series) -> pd.Series:
-    total = counts.sum()
-    if total == 0:
+    total = float(counts.sum())
+    if total == 0.0:
         return counts * 0.0
     return counts / total * 1e6
 
@@ -47,12 +73,13 @@ def log_transform(series: pd.Series, pseudocount: float = 1.0) -> pd.Series:
 # GPR mapping helpers
 # -------------------------
 def aggregate_expression_for_reaction(reaction: Reaction, gene_expr: Dict[str, float]) -> float:
-    rule = reaction.gene_reaction_rule.strip()
+    rule = reaction.gene_reaction_rule.strip() if reaction.gene_reaction_rule is not None else ""
     genes = [g.id for g in reaction.genes]
     if len(genes) == 0:
         return 0.0
     vals = [float(gene_expr.get(g, 0.0)) for g in genes]
     rule_lower = rule.lower()
+    # simple aggregation: AND -> min, OR -> max, fallback -> max
     if ' and ' in rule_lower and ' or ' not in rule_lower:
         return float(np.nanmin(vals)) if len(vals) > 0 else 0.0
     elif ' or ' in rule_lower and ' and ' not in rule_lower:
@@ -95,18 +122,19 @@ def apply_eflux_scaling_with_lb(
         model = model.copy()
 
     # prepare score range
-    scores = np.array(list(rxn_scores.values()))
-    rmin = float(np.nanmin(scores)) if len(scores) > 0 else 0.0
-    rmax = float(np.nanmax(scores)) if len(scores) > 0 else 1.0
+    scores = np.array(list(rxn_scores.values()), dtype=float) if len(rxn_scores) > 0 else np.array([0.0])
+    rmin = float(np.nanmin(scores)) if scores.size > 0 else 0.0
+    rmax = float(np.nanmax(scores)) if scores.size > 0 else 1.0
     if rmax == rmin:
         rmax = rmin + 1.0
 
-    ub_min = ub_max * ub_min_fraction
-    original_bounds = {}
-    changed_rxns = []
+    ub_min = float(ub_max) * float(ub_min_fraction)
+    original_bounds: Dict[str, Tuple[float, float]] = {}
+    changed_rxns: List[str] = []
 
     for rxn in model.reactions:
-        original_bounds[rxn.id] = (rxn.lower_bound, rxn.upper_bound)
+        # store original bounds as plain floats
+        original_bounds[rxn.id] = (float(rxn.lower_bound), float(rxn.upper_bound))
         # skip exchange reactions
         if any(rxn.id.startswith(pref) for pref in exchange_prefixes):
             continue
@@ -115,42 +143,43 @@ def apply_eflux_scaling_with_lb(
             continue
 
         score = float(rxn_scores.get(rxn.id, 0.0))
-        norm = np.clip((score - rmin) / (rmax - rmin), 0.0, 1.0)
-        ub_scaled = ub_min + norm * (ub_max - ub_min)
+        norm = float(np.clip((score - rmin) / (rmax - rmin), 0.0, 1.0))
+        ub_scaled = float(ub_min + norm * (ub_max - ub_min))
         if ub_scaled < eps:
-            ub_scaled = eps
-        
+            ub_scaled = float(eps)
+
         # apply rules based on reversibility and original bounds
-        if rxn.reversibility:
-            rxn.lower_bound = -ub_scaled
-            rxn.upper_bound = ub_scaled
+        if bool(rxn.reversibility):
+            rxn.lower_bound = float(-ub_scaled)
+            rxn.upper_bound = float(ub_scaled)
         else:
             orig_lb, orig_ub = original_bounds[rxn.id]
             # irreversible forward (orig_lb >= 0)
             if orig_lb >= 0:
+                # if reaction originally closed or scaled ub tiny -> keep closed (or minimal)
                 if orig_ub == 0 or ub_scaled <= eps:
                     rxn.lower_bound = 0.0
-                    rxn.upper_bound = eps
+                    rxn.upper_bound = float(eps)
                 else:
-                    rxn.lower_bound = max(orig_lb, eps)
-                    rxn.upper_bound = ub_scaled
+                    rxn.lower_bound = float(max(orig_lb, eps))
+                    rxn.upper_bound = float(ub_scaled)
             # irreversible backward (orig_ub <= 0)
             elif orig_ub <= 0:
                 if ub_scaled <= eps:
                     rxn.lower_bound = 0.0
-                    rxn.upper_bound = eps
+                    rxn.upper_bound = float(eps)
                 else:
-                    rxn.upper_bound = min(orig_ub, -eps)
-                    rxn.lower_bound = -ub_scaled
+                    rxn.upper_bound = float(min(orig_ub, -eps))
+                    rxn.lower_bound = float(-ub_scaled)
             else:
                 # fallback: keep original lb sign, set ub scaled
-                rxn.lower_bound = orig_lb
-                rxn.upper_bound = ub_scaled
-        
-        # general check
-        if rxn.lower_bound > rxn.upper_bound:
-            rxn.lower_bound = rxn.upper_bound
+                rxn.lower_bound = float(orig_lb)
+                rxn.upper_bound = float(ub_scaled)
 
+        # general numeric safety check
+        if float(rxn.lower_bound) > float(rxn.upper_bound):
+            # set lb to ub to preserve consistency
+            rxn.lower_bound = float(rxn.upper_bound)
 
         changed_rxns.append(rxn.id)
 
@@ -158,17 +187,17 @@ def apply_eflux_scaling_with_lb(
     for rxn_id in whitelist_rxns:
         if rxn_id in model.reactions:
             rxn = model.reactions.get_by_id(rxn_id)
-            lb, ub = rxn.lower_bound, rxn.upper_bound
-            if rxn.reversibility:
+            lb, ub = float(rxn.lower_bound), float(rxn.upper_bound)
+            if bool(rxn.reversibility):
                 if abs(lb) < eps and abs(ub) < eps:
-                    rxn.lower_bound = -eps
-                    rxn.upper_bound = eps
+                    rxn.lower_bound = -float(eps)
+                    rxn.upper_bound = float(eps)
             else:
                 # irreversible forward: ensure ub positive
                 if ub <= 0:
-                    rxn.upper_bound = eps
+                    rxn.upper_bound = float(eps)
                 if lb >= 0 and lb < eps:
-                    rxn.lower_bound = eps
+                    rxn.lower_bound = float(eps)
 
     return model, original_bounds
 
@@ -290,15 +319,15 @@ def build_context_specific_model_from_rnaseq_single_env(
     for rxn_id in essential_rxns:
         if rxn_id in scaled_model.reactions:
             rxn = scaled_model.reactions.get_by_id(rxn_id)
-            if rxn.reversibility:
-                if abs(rxn.lower_bound) < eps and abs(rxn.upper_bound) < eps:
-                    rxn.lower_bound = -eps
-                    rxn.upper_bound = eps
+            if bool(rxn.reversibility):
+                if abs(float(rxn.lower_bound)) < eps and abs(float(rxn.upper_bound)) < eps:
+                    rxn.lower_bound = -float(eps)
+                    rxn.upper_bound = float(eps)
             else:
-                if rxn.upper_bound <= 0:
-                    rxn.upper_bound = eps
-                if rxn.lower_bound >= 0 and rxn.lower_bound < eps:
-                    rxn.lower_bound = eps
+                if float(rxn.upper_bound) <= 0:
+                    rxn.upper_bound = float(eps)
+                if float(rxn.lower_bound) >= 0 and float(rxn.lower_bound) < eps:
+                    rxn.lower_bound = float(eps)
     if apply_thermo:
         scaled_model = run_pytfa_thermo_curation(scaled_model)
     diagnostics = {}
@@ -364,10 +393,20 @@ def build_models_from_multi_env_csv(
             processes_for_deletion=processes_for_deletion,
             apply_thermo=apply_thermo
         )
+        # Before writing SBML, ensure reversibility flags are plain Python bools
+        for rxn in adjusted_model.reactions:
+            # set reversibility explicitly as Python bool
+            try:
+                rxn.reversibility = bool(float(rxn.lower_bound) < 0.0)
+            except Exception:
+                rxn.reversibility = False
         out_model_path = out_dir / f"{Path(model_path).stem}_{env_short}_eflux.xml"
+        # write SBML (libSBML expects native Python bools for reversibility)
         cobra.io.write_sbml_model(adjusted_model, str(out_model_path))
         diag_path = out_dir / f"{Path(model_path).stem}_{env_short}_diagnostics.json"
-        pd.Series(diag).to_json(str(diag_path), orient='index')
+        # write diagnostics as JSON
+        with open(str(diag_path), 'w') as jf:
+            json.dump(diag, jf, indent=2)
         diagnostics_all[env_short] = diag
     return diagnostics_all
 
@@ -375,7 +414,6 @@ def build_models_from_multi_env_csv(
 # Example main usage
 # -------------------------
 if __name__ == "__main__":
-    #project_root = Path(__file__).parent
     model_path = "models/iJN1463.xml"
     rnaseq_csv_path = "expression_txt_files/merged_expression.csv"
     output_dir = "models/context_specific"
