@@ -1,11 +1,11 @@
-# scale_bounds_and_test_growth_ex.py
+# adjust_bounds_and_test_growth.py
 import cobra
 from pathlib import Path
 
-MODEL_PATH = "models/iJN1463.xml"   # مسیر مدل خودت
+MODEL_PATH = "models/iJN1463.xml"   # مسیر مدل
 BIOMASS_RXN = "BIOMASS_KT2440_WT3"
+SCALE_FACTOR = 0.001
 
-# دیکشنری uptakeهای خاص با bounds مشخص
 special_ex_bounds = {
     "EX_cit_e": (-1.0, 1000.0),
     "EX_o2_e": (-20.0, 1000.0),
@@ -37,41 +37,40 @@ def get_growth(model, biomass_rxn=BIOMASS_RXN):
     sol = model.optimize()
     return sol.status, float(sol.objective_value) if sol.status == 'optimal' else None
 
-def adjust_ex_bounds(model):
+def adjust_bounds(model):
     original_bounds = {}
     for r in model.reactions:
+        original_bounds[r.id] = (float(r.lower_bound), float(r.upper_bound))
         if r.id.startswith("EX_"):
-            original_bounds[r.id] = (float(r.lower_bound), float(r.upper_bound))
             if r.id in special_ex_bounds:
                 lb, ub = special_ex_bounds[r.id]
                 r.lower_bound = float(lb)
                 r.upper_bound = float(ub)
             else:
-                # همهٔ EX_ های دیگر بسته شوند
                 r.lower_bound = 0.0
                 r.upper_bound = 0.0
+        else:
+            # scale non-EX reactions
+            r.lower_bound = float(r.lower_bound) * SCALE_FACTOR
+            r.upper_bound = float(r.upper_bound) * SCALE_FACTOR
     return original_bounds
 
 def main():
-    print("Loading model:", MODEL_PATH)
     m = load_model(MODEL_PATH)
     status_before, growth_before = get_growth(m)
-    print("Before adjustment -> status:", status_before, "growth:", growth_before)
+    print("Before adjustment ->", status_before, growth_before)
 
     m_adj = m.copy()
-    original_bounds = adjust_ex_bounds(m_adj)
-    print("Adjusted EX_ bounds: special set open, others closed.")
+    adjust_bounds(m_adj)
+    print("Bounds adjusted: non-EX scaled by 0.1, EX closed except special list.")
 
     status_after, growth_after = get_growth(m_adj)
-    print("After adjustment -> status:", status_after, "growth:", growth_after)
+    print("After adjustment ->", status_after, growth_after)
 
-    # ذخیرهٔ مدل اصلاح‌شده
-    out_path = Path("models/context_specific") / f"{Path(MODEL_PATH).stem}_ex_adjusted.xml"
+    out_path = Path("models/context_specific") / f"{Path(MODEL_PATH).stem}_bounds_adjusted.xml"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cobra.io.write_sbml_model(m_adj, str(out_path))
     print("Adjusted model written to:", out_path)
-
-    return m, m_adj, original_bounds
 
 if __name__ == "__main__":
     main()
