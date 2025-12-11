@@ -8,7 +8,7 @@ SCALE_FACTOR = 0.001
 
 
 special_other_bounds = {
-    "ATPM": (0.5, 0.5),
+    "ATPM": (0.05, 0.05),
     "SK_pqqA_kt_c": (-1.0, 0.0),
 }
 special_ex_bounds = {
