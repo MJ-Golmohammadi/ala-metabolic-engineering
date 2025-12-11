@@ -5,7 +5,7 @@ from pathlib import Path
 MODEL_PATH = "models/iJN1463.xml"   # مسیر مدل خودت را اینجا بگذار
 BIOMASS_RXN = "BIOMASS_KT2440_WT3"  # نام واکنش بیومس در مدل
 EXCLUDE_EXCHANGES = True            # اگر می‌خواهی EX_ ها را تغییر ندهد، True بگذار
-SCALE_FACTOR = 0.1                  # یک دهم
+SCALE_FACTOR = 0.001                  # یک دهم
 
 def load_model(path):
     return cobra.io.read_sbml_model(path)
