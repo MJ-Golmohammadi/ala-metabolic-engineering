@@ -7,7 +7,7 @@ BIOMASS_RXN = "BIOMASS_KT2440_WT3"
 SCALE_FACTOR = 0.001
 
 
-special_ex_bounds = {
+special_other_bounds = {
     "ATPM": (5, 5),
     "SK_pqqA_kt_c": (-1.0, 0.0),
 }
