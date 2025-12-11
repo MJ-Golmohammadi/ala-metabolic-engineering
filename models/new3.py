@@ -3,7 +3,7 @@ import ast
 
 # فایل‌ها را بخوان
 df_bounds = pd.read_csv("models/final_constrained_rnaseq_thermo/reaction_bounds_summary_Cit.csv")   # شامل reaction_id و final_upper_bound
-df_ids = pd.read_csv("file2.csv")      # شامل ستون ids
+df_ids = pd.read_csv("config/essential_rxns.csv")      # شامل ستون ids
 
 # تابع برای parse کردن ستون ids
 def parse_ids_field(field):
