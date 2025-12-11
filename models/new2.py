@@ -46,7 +46,7 @@ def adjust_bounds(model):
     original_bounds = {}
     for r in model.reactions:
         original_bounds[r.id] = (float(r.lower_bound), float(r.upper_bound))
-         if r.id in special_other_bounds:
+        if r.id in special_other_bounds:
             lb, ub = special_other_bounds[r.id]
             r.lower_bound = float(lb)
             r.upper_bound = float(ub)
