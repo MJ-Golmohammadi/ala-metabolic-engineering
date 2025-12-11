@@ -6,6 +6,11 @@ MODEL_PATH = "models/iJN1463.xml"   # مسیر مدل
 BIOMASS_RXN = "BIOMASS_KT2440_WT3"
 SCALE_FACTOR = 0.001
 
+
+special_ex_bounds = {
+    "ATPM": (5, 5),
+    "SK_pqqA_kt_c": (-1.0, 0.0),
+}
 special_ex_bounds = {
     "EX_cit_e": (-100.0, 1000.0),
     "EX_o2_e": (-20.0, 1000.0),
@@ -41,7 +46,11 @@ def adjust_bounds(model):
     original_bounds = {}
     for r in model.reactions:
         original_bounds[r.id] = (float(r.lower_bound), float(r.upper_bound))
-        if r.id.startswith("EX_"):
+         if r.id in special_other_bounds:
+            lb, ub = special_other_bounds[r.id]
+            r.lower_bound = float(lb)
+            r.upper_bound = float(ub)
+        elif r.id.startswith("EX_"):
             if r.id in special_ex_bounds:
                 lb, ub = special_ex_bounds[r.id]
                 r.lower_bound = float(lb)
