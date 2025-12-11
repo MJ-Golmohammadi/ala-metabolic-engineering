@@ -279,8 +279,47 @@ def build_context_specific_model_from_rnaseq_single_env(
     ub_min_fraction: float = 0.01,
     eps: float = 1e-6,
     processes_for_deletion: int = 4,
-    apply_thermo: bool = False
+    apply_thermo: bool = False,
+    env_bounds: Optional[Dict[str, Tuple[float, float]]] = None
 ) -> Tuple[Model, Dict]:
+    """
+    Revised pipeline:
+    1) copy model
+    2) apply environment bounds (env_bounds or default small set)
+    3) normalize RNA-seq and map to reactions
+    4) detect essential reactions on model WITH environment applied
+    5) build whitelist and apply eflux scaling
+    6) diagnostics + debug info
+    """
+    # 1. copy model
+    m = model.copy()
+
+    # 2. apply environment (either provided dict or sensible defaults)
+    if env_bounds is None:
+        env_bounds = {
+            "EX_glc__D_e": (-10.0, 1000.0),
+            "EX_nh4_e": (-10.0, 1000.0),
+            "EX_pi_e": (-10.0, 1000.0),
+            "EX_so4_e": (-10.0, 1000.0),
+            "EX_o2_e": (-20.0, 1000.0),
+            "EX_h2o_e": (-1000.0, 1000.0),
+            "EX_co2_e": (-1000.0, 1000.0)
+        }
+    for rxn_id, (lb, ub) in env_bounds.items():
+        if rxn_id in m.reactions:
+            r = m.reactions.get_by_id(rxn_id)
+            r.lower_bound = float(lb)
+            r.upper_bound = float(ub)
+
+    # quick check: print EX_ bounds (debug)
+    exs = [r for r in m.reactions if r.id.startswith("EX_")]
+    # small debug print; you can comment these out later
+    print("Applied environment EX_ sample:")
+    for r in exs:
+        if r.id in env_bounds:
+            print(f"  {r.id}: lb={r.lower_bound}, ub={r.upper_bound}")
+
+    # 3. normalize RNA-seq and map to reactions
     counts_df = rnaseq_counts.to_frame(name='counts')
     norm = median_ratio_normalization(counts_df)
     if isinstance(norm, pd.Series):
@@ -289,24 +328,30 @@ def build_context_specific_model_from_rnaseq_single_env(
         norm_series = norm.iloc[:, 0]
     cpm = counts_to_cpm(norm_series)
     expr = log_transform(cpm, pseudocount=1.0)
-    rxn_scores = map_expression_to_reactions(model, expr)
+    rxn_scores = map_expression_to_reactions(m, expr)
+
+    # 4. detect essential reactions ON model with environment applied
     essential_rxns = find_essential_reactions(
-        model,
+        m,
         biomass_rxn_id=biomass_rxn_id,
         threshold_fraction=0.05,
         absolute_threshold=1e-6,
         processes=processes_for_deletion
     )
+
+    # 5. build whitelist and apply scaling
     whitelist = set(essential_rxns)
     for core in [biomass_rxn_id, 'ATPM']:
-        if core in model.reactions:
+        if core in m.reactions:
             whitelist.add(core)
-    for rxn in ['EX_glc__D_e', 'EX_nh4_e', 'EX_pi_e', 'EX_so4_e', 'EX_o2_e']:
-        if rxn in model.reactions:
+    # keep EX_ uptake keys in whitelist to avoid accidental closure
+    for rxn in env_bounds.keys():
+        if rxn in m.reactions:
             whitelist.add(rxn)
     whitelist = list(whitelist)
+
     scaled_model, original_bounds = apply_eflux_scaling_with_lb(
-        model,
+        m,
         rxn_scores,
         ub_max=ub_max,
         ub_min_fraction=ub_min_fraction,
@@ -315,7 +360,8 @@ def build_context_specific_model_from_rnaseq_single_env(
         exchange_prefixes=["EX_"],
         preserve_original_bounds=True
     )
-    # ensure essential reactions have minimal capacity
+
+    # 6. ensure essential reactions have minimal capacity (safety)
     for rxn_id in essential_rxns:
         if rxn_id in scaled_model.reactions:
             rxn = scaled_model.reactions.get_by_id(rxn_id)
@@ -328,8 +374,8 @@ def build_context_specific_model_from_rnaseq_single_env(
                     rxn.upper_bound = float(eps)
                 if float(rxn.lower_bound) >= 0 and float(rxn.lower_bound) < eps:
                     rxn.lower_bound = float(eps)
-    if apply_thermo:
-        scaled_model = run_pytfa_thermo_curation(scaled_model)
+
+    # diagnostics and debug info
     diagnostics = {}
     with scaled_model:
         try:
@@ -341,17 +387,30 @@ def build_context_specific_model_from_rnaseq_single_env(
             diagnostics['growth_feasible'] = False
             diagnostics['growth_rate'] = 0.0
             diagnostics['growth_error'] = str(e)
-    diagnostics.update({
-        'essential_rxns_count': len(essential_rxns),
-        'essential_rxns_sample': essential_rxns[:20],
-        'rxn_scores_summary': {
-            'min': float(np.nanmin(list(rxn_scores.values()))) if len(rxn_scores)>0 else 0.0,
-            'max': float(np.nanmax(list(rxn_scores.values()))) if len(rxn_scores)>0 else 0.0,
-            'median': float(np.nanmedian(list(rxn_scores.values()))) if len(rxn_scores)>0 else 0.0
-        },
-        'whitelist_rxns_count': len(whitelist)
+
+    # debug: list closed reactions and EX_ summary
+    closed = [r.id for r in scaled_model.reactions if float(r.lower_bound) == 0.0 and float(r.upper_bound) == 0.0]
+    diagnostics['closed_reactions_count'] = len(closed)
+    diagnostics['closed_reactions_sample'] = closed[:50]
+    diagnostics['essential_rxns_count'] = len(essential_rxns)
+    diagnostics['essential_rxns_sample'] = essential_rxns[:20]
+    diagnostics['whitelist_rxns_count'] = len(whitelist)
+    diagnostics['rxn_scores_summary'] = {
+        'min': float(np.nanmin(list(rxn_scores.values()))) if len(rxn_scores) > 0 else 0.0,
+        'max': float(np.nanmax(list(rxn_scores.values()))) if len(rxn_scores) > 0 else 0.0,
+        'median': float(np.nanmedian(list(rxn_scores.values()))) if len(rxn_scores) > 0 else 0.0
+    }
+
+    # print short diagnostic to console for quick feedback
+    print("Post-scaling diagnostics:", {
+        'growth_feasible': diagnostics['growth_feasible'],
+        'growth_rate': diagnostics['growth_rate'],
+        'closed_reactions_count': diagnostics['closed_reactions_count'],
+        'essential_count': diagnostics['essential_rxns_count']
     })
+
     return scaled_model, diagnostics
+
 
 # -------------------------
 # Build models from multi-env CSV
