@@ -2,10 +2,11 @@ from cobra import io
 adjusted_model = io.read_sbml_model("models/context_specific/iJN1463_Glu_eflux.xml")
 adjusted_model.objective = "BIOMASS_KT2440_WT3"
 #print(adjusted_model.optimize().status, adjusted_model.optimize().objective_value)
-closed = [r.id for r in adjusted_model.reactions if float(r.lower_bound)==0.0 and float(r.upper_bound)==0.0]
-tiny = [r.id for r in adjusted_model.reactions if abs(float(r.upper_bound)) <= 1e-6 and abs(float(r.lower_bound)) <= 1e-6]
-print("closed count:", len(closed))
-print("closed sample:", closed[:50])
-print("tiny capacity count:", len(tiny))
-print("tiny sample:", tiny[:50])
+exs = [(r.id, float(r.lower_bound), float(r.upper_bound)) for r in adjusted_model.reactions if r.id.startswith("EX_")]
+print("EX bounds:", exs)
+for rname in ["ATPM", "ATPS4r", "ATPS", "BIOMASS_KT2440_WT3"]:
+    if rname in adjusted_model.reactions:
+        r = adjusted_model.reactions.get_by_id(rname)
+        print(rname, float(r.lower_bound), float(r.upper_bound))
+
 
