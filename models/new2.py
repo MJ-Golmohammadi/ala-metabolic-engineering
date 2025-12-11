@@ -7,7 +7,7 @@ BIOMASS_RXN = "BIOMASS_KT2440_WT3"
 SCALE_FACTOR = 0.001
 
 special_ex_bounds = {
-    "EX_cit_e": (-1.0, 1000.0),
+    "EX_cit_e": (-10.0, 1000.0),
     "EX_o2_e": (-20.0, 1000.0),
     "EX_nh4_e": (-10.0, 1000.0),
     "EX_pi_e": (-5.0, 1000.0),
