@@ -10,6 +10,8 @@ Modifications requested:
   list of reactions (ALA production targets) provided in a CSV:
     ala_production_rxns.csv
   This CSV uses the same 'ids' column format as the other config CSVs.
+- Essential reactions (ESSENTIAL_CSV) keep their previous behavior: if listed,
+  they are forced to the provided lb/ub (or defaults) and recorded.
 - All CSV parsing uses CSV_SEPARATOR.
 - `parse_ids_field` robustly parses inputs like "{'OCBT'}" -> "OCBT".
 - English comments and logging added for clarity.
@@ -29,6 +31,7 @@ import ast
 MODEL_PATH = "models/iJN1463.xml"
 EXPR_FILE = "expression_txt_files/merged_expression.csv"     # semicolon-separated CSV
 DG_FILE = "models/kegg_reactions_CC_ph7.0.csv"               # CSV with reaction_id;deltaG
+ESSENTIAL_CSV = "config/essential_rxns.csv"                 # CSV listing essential reaction ids and optional bounds
 ALA_RXNS_CSV = "config/ala_production_rxns.csv"             # CSV listing reactions to apply engineering to
 CSV_SEPARATOR = ";"                                         # separator used in CSV files
 OUTPUT_DIR = "models/final_constrained_rnaseq_thermo"
@@ -107,6 +110,61 @@ def parse_ids_field(val):
 
     # Single token fallback
     return [s.strip().strip("'\"")]
+
+
+def load_essential_map(csv_path):
+    """
+    Load essential reactions and optional bounds from CSV.
+
+    Returns:
+        dict: { reaction_id: (lb_or_None, ub_or_None) }
+
+    The CSV must contain a column named 'ids'. Optional columns for bounds:
+    - lower bound: one of ('lb', 'lower_bound', 'final_lower_bound')
+    - upper bound: one of ('ub', 'upper_bound', 'final_upper_bound')
+    """
+    essential_map = {}
+    if not os.path.exists(csv_path):
+        logging.warning("Essential CSV not found: %s. No essential reactions will be forced.", csv_path)
+        return essential_map
+
+    try:
+        df_e = pd.read_csv(csv_path, sep=CSV_SEPARATOR)
+    except Exception as e:
+        logging.warning("Failed to read essential CSV %s: %s", csv_path, e)
+        return essential_map
+
+    if "ids" not in df_e.columns:
+        logging.warning("Essential CSV does not contain 'ids' column. No essential reactions loaded.")
+        return essential_map
+
+    # Determine possible column names for lb/ub
+    lb_cols = [c for c in ("lb", "lower_bound", "final_lower_bound") if c in df_e.columns]
+    ub_cols = [c for c in ("ub", "upper_bound", "final_upper_bound") if c in df_e.columns]
+
+    for _, row in df_e.iterrows():
+        ids_field = row.get("ids", None)
+        ids = parse_ids_field(ids_field)
+        # Read lb/ub if present
+        lb = None
+        ub = None
+        if lb_cols:
+            try:
+                val = row[lb_cols[0]]
+                lb = float(val) if not pd.isna(val) else None
+            except Exception:
+                lb = None
+        if ub_cols:
+            try:
+                val = row[ub_cols[0]]
+                ub = float(val) if not pd.isna(val) else None
+            except Exception:
+                ub = None
+        for rid in ids:
+            if rid:
+                essential_map[str(rid).strip()] = (lb, ub)
+    logging.info("Loaded %d essential reaction entries from %s", len(essential_map), csv_path)
+    return essential_map
 
 
 def load_ala_set(csv_path):
@@ -265,6 +323,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
         # Save original model bounds to preserve if not targeted
         orig_lb = float(rxn.lower_bound)
         orig_ub = float(rxn.upper_bound)
+
 
         # -----------------------------------------------------------------
         # (2) If reaction is in ALA engineering set -> apply RNA/thermo logic
@@ -435,6 +494,8 @@ if __name__ == "__main__":
         logging.warning("Failed to load ΔG file %s: %s. Proceeding with empty ΔG map.", DG_FILE, e)
         dg_map = {}
 
+    # Load essential reactions map from CSV (may be empty)
+    essential_map = load_essential_map(ESSENTIAL_CSV)
 
     # Load ALA engineering target set (only these reactions will receive RNA/thermo changes)
     ala_set = load_ala_set(ALA_RXNS_CSV)
