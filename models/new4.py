@@ -334,26 +334,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
             expr_bound = get_flux_bound_from_tpm(tpm_value)
             tpm_lb, tpm_ub = -expr_bound, expr_bound
 
-            # Exchange reactions: keep open but cap
-            if rxn.id.startswith("EX_"):
-                final_lb = -5
-                final_ub = UPPER_CAP
-                final_lb, final_ub = cap_bounds(final_lb, final_ub)
-                rxn.lower_bound = float(final_lb)
-                rxn.upper_bound = float(final_ub)
-                summary_rows.append({
-                    "reaction_id": rxn.id,
-                    "reaction_name": rxn.name,
-                    "kegg_id": "",
-                    "gpr_rule": rxn.gene_reaction_rule or "",
-                    "DeltaG": None,
-                    "tpm_value": float(tpm_value),
-                    "expr_bound": float(expr_bound),
-                    "final_lower_bound": float(final_lb),
-                    "final_upper_bound": float(final_ub),
-                    "note": "ala_target_exchange"
-                })
-                continue
+
 
             # Biomass reaction: keep open but capped
             if rxn.id == "BIOMASS_KT2440_WT3":
