@@ -8,7 +8,7 @@ environments:
   
   # Glucose: C6H12O6 → 6 carbon atoms
   Glu:
-    EX_glc__D_e: [-100.0, 999_999]     # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_glc__D_e: [-10.0, 999_999]     # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
     EX_o2_e: [-20.0, 999_999]        # Oxygen uptake
     EX_nh4_e: [-10.0, 999_999]       # Ammonium uptake
     EX_pi_e: [-5.0, 999_999]         # Phosphate uptake
@@ -31,7 +31,7 @@ environments:
 
   # Citrate: C6H8O7 → 6 carbon atoms  
   Cit:
-    EX_cit_e: [-1.0, 1000.0]        # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_cit_e: [-10.0, 1000.0]        # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
     EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
     EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
@@ -53,7 +53,7 @@ environments:
     EX_h_e: [-1000.0, 1000.0]       # Proton exchange
   # Serine: C3H7NO3 → 3 carbon atoms
   Ser:
-    EX_ser__L_e: [-2.0, 1000.0]     # 2.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_ser__L_e: [-10.0, 1000.0]     # 2.0 mmol/gDW/h = 6 mmol C/gDW/h
     EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
     EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
@@ -76,7 +76,7 @@ environments:
 
   # Ferulate: C10H10O4 → 10 carbon atoms
   Fer:
-    EX_fer_e: [-0.6, 1000.0]        # 0.6 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_fer_e: [-10, 1000.0]        # 0.6 mmol/gDW/h = 6 mmol C/gDW/h
     EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
     EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
