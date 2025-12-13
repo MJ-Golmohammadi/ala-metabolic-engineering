@@ -109,61 +109,6 @@ def parse_ids_field(val):
     return [s.strip().strip("'\"")]
 
 
-def load_essential_map(csv_path):
-    """
-    Load essential reactions and optional bounds from CSV.
-
-    Returns:
-        dict: { reaction_id: (lb_or_None, ub_or_None) }
-
-    The CSV must contain a column named 'ids'. Optional columns for bounds:
-    - lower bound: one of ('lb', 'lower_bound', 'final_lower_bound')
-    - upper bound: one of ('ub', 'upper_bound', 'final_upper_bound')
-    """
-    essential_map = {}
-    if not os.path.exists(csv_path):
-        logging.warning("Essential CSV not found: %s. No essential reactions will be forced.", csv_path)
-        return essential_map
-
-    try:
-        df_e = pd.read_csv(csv_path, sep=CSV_SEPARATOR)
-    except Exception as e:
-        logging.warning("Failed to read essential CSV %s: %s", csv_path, e)
-        return essential_map
-
-    if "ids" not in df_e.columns:
-        logging.warning("Essential CSV does not contain 'ids' column. No essential reactions loaded.")
-        return essential_map
-
-    # Determine possible column names for lb/ub
-    lb_cols = [c for c in ("lb", "lower_bound", "final_lower_bound") if c in df_e.columns]
-    ub_cols = [c for c in ("ub", "upper_bound", "final_upper_bound") if c in df_e.columns]
-
-    for _, row in df_e.iterrows():
-        ids_field = row.get("ids", None)
-        ids = parse_ids_field(ids_field)
-        # Read lb/ub if present
-        lb = None
-        ub = None
-        if lb_cols:
-            try:
-                val = row[lb_cols[0]]
-                lb = float(val) if not pd.isna(val) else None
-            except Exception:
-                lb = None
-        if ub_cols:
-            try:
-                val = row[ub_cols[0]]
-                ub = float(val) if not pd.isna(val) else None
-            except Exception:
-                ub = None
-        for rid in ids:
-            if rid:
-                essential_map[str(rid).strip()] = (lb, ub)
-    logging.info("Loaded %d essential reaction entries from %s", len(essential_map), csv_path)
-    return essential_map
-
-
 def load_ala_set(csv_path):
     """
     Load a set of reaction ids from ALA_RXNS_CSV that should receive the
