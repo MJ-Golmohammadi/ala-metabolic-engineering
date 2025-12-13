@@ -2,25 +2,14 @@
 """
 Condition-specific GEM construction using RNA-seq CSV + local ΔG file.
 
-This script constrains a base genome-scale metabolic model (GEM) per condition
-using RNA-seq expression data and precomputed reaction ΔG values. Essential
-reactions and their optional bounds are read from an external CSV file so that
-the list of essential reactions is not hard-coded.
-
-Requirements:
-    pip install cobra pandas
-
-Inputs:
-    - MODEL_PATH: SBML model file
-    - EXPR_FILE: semicolon-separated expression CSV (Synonym;Expression_Glu;...)
-    - DG_FILE: semicolon-separated ΔG CSV (reaction_id;deltaG)
-    - ESSENTIAL_CSV: CSV with column `ids` containing reaction ids (single id,
-      Python set literal like "{'R1','R2'}", or delimited list). Optional
-      columns: lb, ub to specify bounds for listed reactions.
-
-Outputs:
-    - Constrained SBML models per condition in OUTPUT_DIR
-    - reaction_bounds_summary_{condition}.csv per condition
+Modifications:
+- Added support for a SECOND CSV (SPECIFIC_CSV) that lists reaction ids whose
+  original model bounds must be preserved (no override).
+- The existing ESSENTIAL_CSV behavior is kept: essential reactions listed there
+  will be forced to the provided lb/ub (if present) or to default forced bounds.
+- Improved `parse_ids_field` to reliably parse inputs like "{'OCBT'}" -> "OCBT".
+- All CSV reads use the configured CSV_SEPARATOR.
+- English comments throughout as requested.
 """
 
 import os
@@ -36,9 +25,10 @@ import ast
 # -----------------------------------------------------------------------------
 MODEL_PATH = "models/iJN1463.xml"
 EXPR_FILE = "expression_txt_files/merged_expression.csv"     # semicolon-separated CSV
-DG_FILE = "models/kegg_reactions_CC_ph7.0.csv"               # CSV with reaction_id, deltaG
+DG_FILE = "models/kegg_reactions_CC_ph7.0.csv"               # CSV with reaction_id;deltaG
 ESSENTIAL_CSV = "config/essential_rxns.csv"                 # CSV listing essential reaction ids and optional bounds
-CSV_SEPARATOR = ";"
+SPECIFIC_CSV = "config/specific_rxns.csv"                   # CSV listing reaction ids whose model bounds must be preserved
+CSV_SEPARATOR = ";"                                         # separator used in CSV files
 OUTPUT_DIR = "models/final_constrained_rnaseq_thermo"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -57,15 +47,20 @@ DG_SCALE2 = 60
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 # -----------------------------------------------------------------------------
-# Helper functions for parsing and loading essential reactions CSV
+# Helper functions for parsing and loading essential/specific reactions CSV
 # -----------------------------------------------------------------------------
 def parse_ids_field(val):
     """
-    Parse an `ids` field from the CSV. Supported formats:
+    Parse an `ids` field from a CSV cell and return a list of cleaned reaction ids.
+
+    Supported input formats:
       - Single id: "ATPM"
       - Python set/list literal: "{'ATPM','PDH'}" or "['ATPM','PDH']"
       - Delimited list: "ATPM;PDH" or "ATPM,PDH"
-    Returns a list of cleaned reaction ids.
+      - Bare braces with single token: "{OCBT}" or "{'OCBT'}"
+
+    Returns:
+        list of strings (each stripped of whitespace and quotes)
     """
     if pd.isna(val):
         return []
@@ -73,28 +68,44 @@ def parse_ids_field(val):
     if s == "":
         return []
 
-    # Try to parse Python literal (set/list/tuple/dict)
+    # Try to parse Python literal safely
     try:
+        # Accept common literal wrappers
         if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")) or (s.startswith("(") and s.endswith(")")):
             parsed = ast.literal_eval(s)
+            # If dict, return keys
             if isinstance(parsed, dict):
                 return [str(k).strip() for k in parsed.keys()]
+            # If set/list/tuple, return elements
             if isinstance(parsed, (set, list, tuple)):
                 return [str(x).strip() for x in parsed]
+            # If single scalar, return as single-element list
+            return [str(parsed).strip()]
     except Exception:
-        # Fall through to delimiter parsing
+        # Fall through to delimiter parsing if literal_eval fails
         pass
 
-    # Delimiter-based parsing
+    # If the string contains semicolons or commas, split accordingly
     if ";" in s:
-        parts = [p.strip() for p in s.split(";") if p.strip()]
+        parts = [p.strip().strip("'\"") for p in s.split(";") if p.strip()]
         return parts
     if "," in s:
-        parts = [p.strip() for p in s.split(",") if p.strip()]
+        parts = [p.strip().strip("'\"") for p in s.split(",") if p.strip()]
         return parts
 
-    # Single token
-    return [s]
+    # Remove surrounding braces if present (e.g., "{OCBT}" or "{'OCBT'}")
+    m = re.match(r"^\{(.*)\}$", s)
+    if m:
+        inner = m.group(1).strip()
+        # split inner by comma if multiple
+        if "," in inner or ";" in inner:
+            sep = "," if "," in inner else ";"
+            parts = [p.strip().strip("'\"") for p in inner.split(sep) if p.strip()]
+            return parts
+        return [inner.strip().strip("'\"")]
+
+    # Single token fallback
+    return [s.strip().strip("'\"")]
 
 
 def load_essential_map(csv_path):
@@ -103,7 +114,10 @@ def load_essential_map(csv_path):
 
     Returns:
         dict: { reaction_id: (lb_or_None, ub_or_None) }
-    If CSV is missing or empty, returns an empty dict.
+
+    The CSV must contain a column named 'ids'. Optional columns for bounds:
+    - lower bound: one of ('lb', 'lower_bound', 'final_lower_bound')
+    - upper bound: one of ('ub', 'upper_bound', 'final_upper_bound')
     """
     essential_map = {}
     if not os.path.exists(csv_path):
@@ -111,7 +125,7 @@ def load_essential_map(csv_path):
         return essential_map
 
     try:
-        df_e = pd.read_csv(csv_path, sep=";")
+        df_e = pd.read_csv(csv_path, sep=CSV_SEPARATOR)
     except Exception as e:
         logging.warning("Failed to read essential CSV %s: %s", csv_path, e)
         return essential_map
@@ -147,6 +161,37 @@ def load_essential_map(csv_path):
                 essential_map[str(rid).strip()] = (lb, ub)
     logging.info("Loaded %d essential reaction entries from %s", len(essential_map), csv_path)
     return essential_map
+
+
+def load_specific_set(csv_path):
+    """
+    Load a set of reaction ids from SPECIFIC_CSV whose original model bounds
+    should be preserved. The CSV must contain an 'ids' column (same parsing rules).
+    Returns a set of reaction ids (strings).
+    """
+    specific_set = set()
+    if not os.path.exists(csv_path):
+        logging.info("Specific CSV not found: %s. No specific reactions will be preserved.", csv_path)
+        return specific_set
+
+    try:
+        df_s = pd.read_csv(csv_path, sep=CSV_SEPARATOR)
+    except Exception as e:
+        logging.warning("Failed to read specific CSV %s: %s", csv_path, e)
+        return specific_set
+
+    if "ids" not in df_s.columns:
+        logging.warning("Specific CSV does not contain 'ids' column. No specific reactions loaded.")
+        return specific_set
+
+    for _, row in df_s.iterrows():
+        ids_field = row.get("ids", None)
+        ids = parse_ids_field(ids_field)
+        for rid in ids:
+            if rid:
+                specific_set.add(str(rid).strip())
+    logging.info("Loaded %d specific reaction ids from %s", len(specific_set), csv_path)
+    return specific_set
 
 # -----------------------------------------------------------------------------
 # Thermodynamic helper
@@ -233,10 +278,11 @@ def evaluate_gene_rule(rule: str, expr_map: dict) -> float:
 # -----------------------------------------------------------------------------
 # Core pipeline
 # -----------------------------------------------------------------------------
-def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_map: dict):
+def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_map: dict, specific_set: set):
     """
     Constrain the base model for a given condition using expression and ΔG maps.
-    Essential reactions are enforced according to `essential_map`.
+    - essential_map: reactions forced according to CSV (may include lb/ub)
+    - specific_set: reactions whose original model bounds must be preserved
     """
     logging.info("Condition: %s | Expression column: %s", condition, expr_column)
 
@@ -254,6 +300,29 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
 
     for rxn in model.reactions:
 
+        # Save original model bounds in case we need to preserve them
+        orig_lb = float(rxn.lower_bound)
+        orig_ub = float(rxn.upper_bound)
+
+        # -----------------------------------------------------------------
+        # If reaction is in SPECIFIC set -> preserve original model bounds
+        # -----------------------------------------------------------------
+        if rxn.id in specific_set:
+            # Do not change bounds; record them as final
+            summary_rows.append({
+                "reaction_id": rxn.id,
+                "reaction_name": rxn.name,
+                "kegg_id": "",
+                "gpr_rule": rxn.gene_reaction_rule or "",
+                "DeltaG": None,
+                "tpm_value": 0.0,
+                "expr_bound": 0.0,
+                "final_lower_bound": float(orig_lb),
+                "final_upper_bound": float(orig_ub),
+            })
+            # skip any further modification for this reaction
+            continue
+
         # -----------------------------------------------------------------
         # (A) If reaction is listed as essential in CSV, apply provided bounds
         # -----------------------------------------------------------------
@@ -265,6 +334,10 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
             else:
                 final_lb = -1000.0 * GENERAL_SCALE if rxn.reversibility else 0.0
                 final_ub = 1000.0 * GENERAL_SCALE
+
+            # Safety: ensure lower <= upper
+            if final_lb > final_ub:
+                final_lb, final_ub = final_ub, final_lb
 
             rxn.lower_bound = float(final_lb)
             rxn.upper_bound = float(final_ub)
@@ -295,8 +368,8 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
         # ---------------------------------------------------------
         if rxn.id.startswith("EX_"):
             # Keep a small epsilon to avoid strict zero blocking in some solvers
-            final_lb = -5
-            final_ub = 999_999
+            final_lb = -eps
+            final_ub = eps
             rxn.lower_bound = float(final_lb)
             rxn.upper_bound = float(final_ub)
 
@@ -427,11 +500,11 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
 # Execution
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    print("[INFO] Starting rnaseq+thermo constrain with ΔG file and external essential list")
+    print("[INFO] Starting rnaseq+thermo constrain with ΔG file and external essential/specific lists")
 
     # Load ΔG map
     try:
-        dg_df = pd.read_csv(DG_FILE, sep=";")
+        dg_df = pd.read_csv(DG_FILE, sep=CSV_SEPARATOR)
         dg_map = dict(zip(dg_df['reaction_id'], dg_df['deltaG']))
     except Exception as e:
         logging.warning("Failed to load ΔG file %s: %s. Proceeding with empty ΔG map.", DG_FILE, e)
@@ -440,8 +513,11 @@ if __name__ == "__main__":
     # Load essential reactions map from CSV (may be empty)
     essential_map = load_essential_map(ESSENTIAL_CSV)
 
+    # Load specific reactions set (preserve original bounds)
+    specific_set = load_specific_set(SPECIFIC_CSV)
+
     # Process each condition
     for cond, col in CONDITIONS.items():
-        constrain_model(cond, col, dg_map, essential_map)
+        constrain_model(cond, col, dg_map, essential_map, specific_set)
 
     print("[INFO] All conditions processed")
