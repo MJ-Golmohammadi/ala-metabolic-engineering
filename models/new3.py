@@ -32,7 +32,7 @@ for ids in df_ids["parsed_ids"]:
 # فیلتر روی فایل اول: reaction_id در لیست ids و final_upper_bound < 5
 filtered = df_bounds[
     (df_bounds["reaction_id"].isin(all_ids)) &
-    (df_bounds["final_upper_bound"] < 50)
+    (df_bounds["final_upper_bound"] < 1000)
 ]
 
 # نتایج را چاپ کن
