@@ -1,0 +1,102 @@
+ids;reaction_name;lower_bound;upper_bound
+CUt2pp;Copper transport out via permease (no H+);-999999;0
+HVCD;3-hydroxyacyl-CoA dehydrogenase (3-hydroxyacyl-CoA dehydrogenase (3-oxovaleryl-CoA));-999999;0
+VCACT;Acetyl-CoA C-acyltransferase (3-oxovaleryl-CoA);-999999;0
+PIt7ipp;Phosphate transport in via three Na+ symporter (periplasm);0;0
+SK_pqqA_kt_c;Sink pqqA kt;-1;0
+ATPM;ATP maintenance requirement;0.92;0.92
+NI2abcpp;Nickle (Ni+2) ABC transporter (periplasm);0;1000
+MEPCT_1;2-C-methyl-D-erythritol 4-phosphate cytidylyltransferase;0;1000
+PRAIi_copy2;Phosphoribosylanthranilate isomerase (irreversible);0;1000
+TRPS1_copy2;Tryptophan synthase (indoleglycerol phosphate);0;1000
+TAURabc;Taurine transport via ABC system;0;1000
+AGPOP;DGTP:pyruvate 2-O-phosphotransferase, cytosol;0;1000
+GLNS_copy2;Glutamine synthetase;0;1000
+PIabc;Phosphate transport via ABC system;0;1000
+DHAD1_copy2;Dihydroxy-acid dehydratase (2,3-dihydroxy-3-methylbutanoate);0;1000
+DMALRED;(S)-Malate:(acceptor) oxidoreductase;0;1000
+PRMICI_copy2;1-(5-phosphoribosyl)-5-[(5-phosphoribosylamino)methylideneamino)imidazole-4-carboxamide isomerase;0;1000
+PTRCabc;Putrescine transport via ABC system;0;1000
+PRAMPC_copy2;Phosphoribosyl-AMP cyclohydrolase;0;1000
+DHQTi_copy2;3-dehydroquinate dehydratase, irreversible;0;1000
+PRASCSi_copy2;Phosphoribosylaminoimidazolesuccinocarboxamide synthase;0;1000
+G5SD_copy2;Glutamate-5-semialdehyde dehydrogenase;-1000;1000
+CTPS1;CTP synthase  NH3;0;1000
+HEMEti;Heme transport via ABC system;0;1000
+FOMETRi;Aminomethyltransferase;0;1000
+HDH;Histidinol dehydrogenase, cytosol;0;1000
+PSCVT_copy2;3-phosphoshikimate 1-carboxyvinyltransferase;0;1000
+ADD;Adenine deaminase;0;1000
+APPAT;ATP:pantetheine-4'-phosphate adenylyltransferase;0;1000
+VALTRS_copy2;Valyl-tRNA synthetase;0;1000
+EAR121x;Enoyl-[acyl-carrier-protein] reductase (NADH) (n-C12:1);0;1000
+MOBDabc;Molybdate transport via ABC system;0;1000
+ARGDI;Arginine deiminase;0;1000
+THRD_L;L-threonine deaminase;0;1000
+IDPh_1;Inorganic diphosphatase;0;1000
+MAN1PT;Mannose 1 phosphate guanylyltransferase;0;1000
+MECDPS_copy2;2-C-methyl-D-erythritol 2,4-cyclodiphosphate synthase;0;1000
+PPRGL;Phosphoribosylamine---glycine ligase;0;1000
+SULabc;Sulfate transport via ABC system;0;1000
+HMR_0180_copy2;Butyrate Coenzyme A Ligase;0;1000
+GLUCYS_copy2;Gamma-glutamylcysteine synthetase;0;1000
+NDP8;Nucleoside-diphosphatase (dUDP);0;1000
+AKGDb_copy2;Oxoglutarate dehydrogenase (dihydrolipoamide S-succinyltransferase);0;1000
+SERAT_copy2;Serine O-acetyltransferase;0;1000
+13PPDH2_1;1,3-propanediol dehydrogenase;-1000;1000
+2HESR;2-hydroxyethyldisulfide reductase;0;1000
+3HPTNCOAR;3R 3 Hydroxypentanoyl CoA reductase;0;1000
+3PEPTabcpp;Tripeptide (LalaDgluMdap) transport via ABC system (periplasm);0;1000
+4HPTNCOAK;4 Hydroxypentanoyl CoA kinase;0;1000
+4HPTNCOAL;4 Hydroxypentanoate CoA ligase;0;1000
+4HPTNtex;4 Hydroxypentanoate transport via diffusion;-1000;1000
+4HPTNtpp;4 Hydroxypentanoate transport via Na symport;0;1000
+4OXPTCOADHx;4 Oxopentanoyl CoA 4 dehydrogenase (NAD);0;1000
+4OXPTCOADHy;4 Oxopentanoyl CoA 4 dehydrogenase (NADP);0;1000
+4OXPTNtex;4 Oxopentanoate transport via diffusion;-1000;1000
+4OXPTNtpp;4 Oxopentanoate transport via Na symport;0;1000
+4PEPTabcpp;Tetrapeptide (LalaDgluMdapDala) transport via ABC system (periplasm);0;1000
+4POPCOAM;4 (Phosphooxy pentanoyl CoA mutase;0;1000
+4POPCOAM2;4 (Phosphooxy pentanoyl CoA mutase;-1000;1000
+4POPCOAM3;4 (Phosphooxy pentanoyl CoA mutase;0;1000
+ACMTSOXINtex;N Acetylmethionine sulfoximine transport periplasm;-1000;1000
+ACMTSOXINtpp;N Acetylmethionine sulfoximine transport citoplasm;-1000;1000
+ACPHPHITRNtex;N Acetylphosphinothricin transport periplasm;-1000;1000
+ACPHPHITRNtpp;N Acetylphosphinothricin transport citoplasm;-1000;1000
+ALDD2y;Aldehyde dehydrogenase (acetaldehyde, NADP);0;1000
+ALDD3y_copy2;Aldehyde dehydrogenase (propanal, NADP);0;1000
+AMALT1;Amylomaltase (maltotriose);-1000;1000
+ARGR;Arginine racemase;-1000;1000
+BVMO1;Baeyer-villiger monooxygenase;0;1000
+BVMO2;Baeyer-villiger monooxygenase;0;1000
+BVMO3;Baeyer-villiger monooxygenase;0;1000
+BVMO4;Baeyer-villiger monooxygenase;0;1000
+BVMO5;Baeyer-villiger monooxygenase;0;1000
+CHLP;Choline phosphate phosphatase;0;1000
+CURR;NADPH-dependent curcumin reductase;0;1000
+D2ONEtex;D2ONE transport via diffusion extracellular to periplasm;-1000;1000
+D2ONEtpp;D2ONE transport via diffusion periplasm;-1000;1000
+D3ONEtex;D3ONE transport via diffusion extracellular to periplasm;-1000;1000
+D3ONEtpp;D3ONE transport via diffusion periplasm;-1000;1000
+D4ONEtex;D4ONE transport via diffusion extracellular to periplasm;-1000;1000
+D4ONEtpp;D4ONE transport via diffusion periplasm;-1000;1000
+DHCURR;NADPH-dependent dihydrocurcumin reductase;0;1000
+ETHP;Ethanolamine phosphate phosphatase;0;1000
+GAPDi_nadp;Glyceraldehyde-3-phosphate dehydrogenase (NAD(P)+) (phosphorylating);-1000;1000
+GLUTARH;Glutarate hydroxylase;0;1000
+KAT33;3 Oxopentanoyl CoA thiolase;0;1000
+LEVUACOAL;Levulinate CoA ligase;0;1000
+METNA;L-amino acid N-acyltransferase;-1000;1000
+MTSOXINACT;L Aminoacid acyltransferase;0;1000
+MTSOXINtex;Methionine sulfoximine transport periplasm;-1000;1000
+MTSOXINtpp;Methionine sulfoximine transport citoplasm;-1000;1000
+N2ONEtex;N2ONE transport via diffusion extracellular to periplasm;-1000;1000
+N2ONEtpp;N2ONE transport via diffusion periplasm;-1000;1000
+PHER;Phenylalanine racemase;-1000;1000
+PPTRNACT;L Phosphinothricin N acyltransferase;0;1000
+PPTRNtex;L Phosphinothricin transport periplasm;-1000;1000
+PPTRNtpp;L Phosphinothricin transport citoplasm;-1000;1000
+REPHACCOAT;Ring 1 2 epoxyphenylacetyl CoA thioesterase;0;1000
+SHGO;S-2-hydroxyglutarate oxidase;0;1000
+UND2ONEtex;UND2ONE transport via diffusion extracellular to periplasm;-1000;1000
+UND2ONEtpp;UND2ONE transport via diffusion periplasm;-1000;1000
