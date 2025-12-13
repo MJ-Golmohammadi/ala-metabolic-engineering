@@ -490,8 +490,6 @@ if __name__ == "__main__":
         logging.warning("Failed to load ΔG file %s: %s. Proceeding with empty ΔG map.", DG_FILE, e)
         dg_map = {}
 
-    # Load essential reactions map from CSV (may be empty)
-    essential_map = load_essential_map(ESSENTIAL_CSV)
 
     # Load ALA engineering target set (only these reactions will receive RNA/thermo changes)
     ala_set = load_ala_set(ALA_RXNS_CSV)
