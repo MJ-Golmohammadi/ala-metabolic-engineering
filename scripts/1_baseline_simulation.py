@@ -440,9 +440,9 @@ def main():
 
         production_data = results_df[results_df['objective'] == 'max_biomass']
         summary_stats = production_data.groupby('environment').agg({
-            'growth_rate': ['mean', 'std'],
-            'ala_flux_net': ['mean', 'std'],
-            'yield_mmol_g': ['mean', 'std']
+            'growth_rate': 'mean',
+            'ala_flux_net': 'mean',
+            'yield_mmol_g': 'mean',
         }).round(4)
 
         print("\n📊 Performance Summary by Environment:")
