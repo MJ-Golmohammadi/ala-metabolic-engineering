@@ -373,9 +373,9 @@ def main():
 
                         # Print results clearly
                         if obj_name == "max_biomass":
-                            print(f"    ✅ {obj_name}: Growth = {growth_flux:.4f}, ALA_net = {ala_flux_net:.4f}")
+                            print(f"    ✅ {obj_name}: Growth = {growth_flux:.6f}, ALA_net = {ala_flux_net:.6f}")
                         elif obj_name == "max_ala":
-                            print(f"    ✅ {obj_name}: Growth = {growth_flux:.4f}, ALA_net = {ala_flux_net:.4f} (ALA_gross = {ala_flux_gross:.4f})")
+                            print(f"    ✅ {obj_name}: Growth = {growth_flux:.6f}, ALA_net = {ala_flux_net:.6f} (ALA_gross = {ala_flux_gross:.4f})")
 
                     except Exception as e:
                         print(f"    ❌ Simulation failed: {e}")
@@ -443,7 +443,7 @@ def main():
             'growth_rate': 'mean',
             'ala_flux_net': 'mean',
             'yield_mmol_g': 'mean',
-        }).round(4)
+        }).round(6)
 
         print("\n📊 Performance Summary by Environment:")
         print(summary_stats)
@@ -454,9 +454,9 @@ def main():
         best_yield_env = production_data.loc[production_data['yield_mmol_g'].idxmax()]
 
         print(f"\n🏆 Optimal Conditions:")
-        print(f"  Highest ALA Production: {best_ala_env['environment']} ({best_ala_env['ala_flux_net']:.4f} mmol/gDW/h)")
-        print(f"  Highest Growth: {best_growth_env['environment']} ({best_growth_env['growth_rate']:.4f} h⁻¹)")
-        print(f"  Highest Yield: {best_yield_env['environment']} ({best_yield_env['yield_mmol_g']:.4f} mmol/mmol)")
+        print(f"  Highest ALA Production: {best_ala_env['environment']} ({best_ala_env['ala_flux_net']:.6f} mmol/gDW/h)")
+        print(f"  Highest Growth: {best_growth_env['environment']} ({best_growth_env['growth_rate']:.6f} h⁻¹)")
+        print(f"  Highest Yield: {best_yield_env['environment']} ({best_yield_env['yield_mmol_g']:.6f} mmol/mmol)")
 
         print("\n✅ Enhanced baseline analysis completed successfully!")
 
