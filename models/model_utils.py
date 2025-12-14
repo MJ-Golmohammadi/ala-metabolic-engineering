@@ -12,58 +12,265 @@ import logging
 # Setup logging
 logger = logging.getLogger(__name__)
 
-def create_engineered_strain(base_model: cobra.Model, modifications: Dict) -> cobra.Model:
+def create_engineered_strain(
+    base_model: cobra.Model,
+    modifications: Dict,
+    reference_objectives: List[str] = None,
+    environment: Dict = None,
+    objective_to_rxn: Dict[str, str] = None,
+    cap_value: float = 6000.0
+) -> cobra.Model:
     """
-    Create engineered metabolic model with specified genetic modifications
-    Enhanced for thermo-constrained models
+    Create an engineered metabolic model applying modifications relative to
+    wild-type fluxes computed under one or more reference objectives.
+
+    Behavior and rationale
+    ----------------------
+    - For each reaction in `modifications`, this function computes a sensible
+      target bound based on the wild-type (WT) flux of that reaction under the
+      provided reference objectives (e.g., 'max_biomass', 'max_ala').
+    - If multiple reference objectives are provided, the function computes the
+      WT flux under each and uses the most conservative reference (the largest
+      absolute WT flux) as the baseline for percentage-based changes. This
+      implements the "dual-reference" behavior you requested.
+    - Knockouts set bounds to (0, 0).
+    - Knockdowns set the reaction capacity to a fraction of the WT flux.
+      If WT flux is zero (or extremely small), the function falls back to
+      scaling the current bound to avoid creating infeasible or meaningless
+      constraints.
+    - Overexpression increases capacity relative to both the current bound
+      and the observed WT flux (whichever implies a larger capacity), capped
+      by `cap_value`.
+    - If `environment` is provided, it will be applied when computing WT fluxes.
+    - `objective_to_rxn` maps objective names (strings) to reaction IDs in the
+      model (e.g., 'max_biomass' -> 'BIOMASS_KT2440_WT3', 'max_ala' -> 'G1SAT').
+      A sensible default mapping is used when None is provided.
+
+    Parameters
+    ----------
+    base_model : cobra.Model
+        The wild-type model to copy and modify.
+    modifications : Dict
+        Mapping reaction_id -> modification tag (e.g., 'PPBNGS': 'knockdown_80').
+        Supported tags: keys of modification_factors below.
+    reference_objectives : List[str], optional
+        List of objective names to use as WT references. If None, defaults to
+        ['max_biomass', 'max_ala'].
+    environment : Dict, optional
+        Optional environment bounds to apply when computing WT fluxes (same
+        format as used elsewhere in the project).
+    objective_to_rxn : Dict[str,str], optional
+        Mapping from objective name to reaction id. If None, a default mapping
+        is used.
+    cap_value : float, optional
+        Upper cap for any bound set by this function (safety to avoid huge bounds).
+
+    Returns
+    -------
+    cobra.Model
+        A copy of base_model with modifications applied.
     """
-    engineered = base_model.copy()
-    
-    # Modification factors
+
+    # Default mapping from objective name to reaction id (adjust if your project uses different names)
+    if objective_to_rxn is None:
+        objective_to_rxn = {
+            'max_biomass': 'BIOMASS_KT2440_WT3',
+            'max_ala': 'G1SAT'
+        }
+
+    if reference_objectives is None:
+        reference_objectives = ['max_biomass', 'max_ala']
+
+    # Shorthand modification factors for tags that multiply capacity
     modification_factors = {
         'knockout': 0.0,
-        'knockdown_80': 0.2,    # 80% reduction
-        'knockdown_40': 0.6,    # 40% reduction
-        'knockdown_30': 0.7,    # 30% reduction
+        'knockdown_80': 0.2,    # keep 20% of WT
+        'knockdown_40': 0.6,    # keep 60% of WT
+        'knockdown_30': 0.7,    # keep 70% of WT
         'overexpress_1.5x': 1.5,
         'overexpress_2x': 2.0,
         'overexpress_3x': 3.0,
         'overexpress_5x': 5.0
     }
-    
+
+    # Work on a copy
+    engineered = base_model.copy()
+
+    # Helper: apply environment bounds to a model (non-destructive)
+    def _apply_environment(m: cobra.Model, env: Dict):
+        if not env:
+            return
+        for rxn_id, bounds in env.items():
+            if rxn_id in m.reactions:
+                try:
+                    m.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
+                except Exception:
+                    # ignore individual failures; caller can inspect logs if needed
+                    pass
+
+    # Compute WT flux baseline for each reaction under each reference objective.
+    # We'll store the maximum absolute WT flux across the provided objectives
+    # as the conservative baseline for percentage-based modifications.
+    wt_flux_baseline: Dict[str, float] = {}
+
+    # If there are no modifications that require WT flux, we can skip computing.
+    # But computing per-request is safer and still reasonably fast for a few objectives.
+    # Build a set of reactions we need baselines for
+    reactions_to_check = set(modifications.keys())
+
+    # For each reference objective, compute WT solution and record fluxes
+    for ref_obj in reference_objectives:
+        # Map objective name to reaction id
+        ref_rxn_id = objective_to_rxn.get(ref_obj)
+        if ref_rxn_id is None or ref_rxn_id not in base_model.reactions:
+            # skip unknown objectives
+            continue
+
+        # Use a copy to avoid side-effects
+        tmp = base_model.copy()
+        # Apply environment if provided
+        _apply_environment(tmp, environment)
+
+        # Set biomass objective or product objective as reaction object
+        try:
+            tmp.objective = tmp.reactions.get_by_id(ref_rxn_id)
+        except Exception:
+            # fallback: try setting by string (less preferred)
+            try:
+                tmp.objective = ref_rxn_id
+            except Exception:
+                continue
+
+        # Solve WT under this reference objective
+        try:
+            sol = tmp.optimize()
+            if sol.status != 'optimal':
+                # skip non-optimal results
+                continue
+        except Exception:
+            continue
+
+        # Record fluxes for reactions of interest
+        for rxn_id in reactions_to_check:
+            flux_val = float(sol.fluxes.get(rxn_id, 0.0))
+            prev = wt_flux_baseline.get(rxn_id, 0.0)
+            # keep the maximum absolute flux across objectives (conservative baseline)
+            if abs(flux_val) > abs(prev):
+                wt_flux_baseline[rxn_id] = flux_val
+
+    # Now apply modifications using the computed baselines
     for rxn_id, change_type in modifications.items():
         try:
             rxn = engineered.reactions.get_by_id(rxn_id)
-            
-            if change_type in modification_factors:
-                factor = modification_factors[change_type]
-                
-                # For thermo-constrained models, we need to be careful with bounds
-                if factor == 0.0:  # Knockout
-                    rxn.bounds = (0, 0)
-                    logger.info(f"Knocked out reaction: {rxn_id}")
-                else:
-                    # For overexpression/knockdown, adjust bounds proportionally
-                    # But respect thermodynamic constraints
-                    current_upper = rxn.upper_bound
-                    current_lower = rxn.lower_bound
-                    
-                    if current_upper > 0:  # Forward reaction
-                        new_upper = current_upper * factor
-                        rxn.upper_bound = min(new_upper, 6000)  # Cap at reasonable value
-                    
-                    if current_lower < 0:  # Reverse reaction  
-                        new_lower = current_lower * factor
-                        rxn.lower_bound = max(new_lower, -6000)
-                    
-                    logger.info(f"Modified {rxn_id}: {change_type} ({current_upper:.2f} → {rxn.upper_bound:.2f})")
-                    
         except KeyError:
             logger.warning(f"Reaction {rxn_id} not found in model - skipping modification")
+            continue
         except Exception as e:
-            logger.error(f"Error modifying {rxn_id}: {e}")
-    
+            logger.error(f"Error accessing reaction {rxn_id}: {e}")
+            continue
+
+        # If the tag is not recognized, skip with a warning
+        if change_type not in modification_factors:
+            logger.warning(f"Unknown modification tag '{change_type}' for {rxn_id} - skipping")
+            continue
+
+        factor = modification_factors[change_type]
+
+        # Knockout: set both bounds to zero
+        if factor == 0.0:
+            prev_bounds = (rxn.lower_bound, rxn.upper_bound)
+            rxn.bounds = (0.0, 0.0)
+            logger.info(f"Knocked out reaction {rxn_id}: bounds {prev_bounds} -> (0.0, 0.0)")
+            continue
+
+        # Determine WT baseline flux for this reaction (may be zero or missing)
+        wt_flux = float(wt_flux_baseline.get(rxn_id, 0.0))
+
+        # If WT flux is essentially zero, fall back to scaling current bounds
+        small_eps = 1e-9
+        if abs(wt_flux) <= small_eps:
+            # fallback behavior:
+            # - for knockdown: scale current upper/lower by factor
+            # - for overexpression: multiply current upper by factor
+            prev_upper = rxn.upper_bound
+            prev_lower = rxn.lower_bound
+
+            if change_type.startswith('knockdown'):
+                # reduce capacity proportionally to current bound magnitude
+                if prev_upper > 0:
+                    rxn.upper_bound = max(min(prev_upper * factor, cap_value), 0.0)
+                if prev_lower < 0:
+                    rxn.lower_bound = min(max(prev_lower * factor, -cap_value), 0.0)
+                logger.info(
+                    "Knockdown fallback for %s: bounds (%.6f, %.6f) -> (%.6f, %.6f)",
+                    rxn_id, prev_lower, prev_upper, rxn.lower_bound, rxn.upper_bound
+                )
+            else:
+                # overexpression fallback: increase current capacity
+                if prev_upper > 0:
+                    rxn.upper_bound = min(prev_upper * factor, cap_value)
+                if prev_lower < 0:
+                    rxn.lower_bound = max(prev_lower * factor, -cap_value)
+                logger.info(
+                    "Overexpression fallback for %s: bounds (%.6f, %.6f) -> (%.6f, %.6f)",
+                    rxn_id, prev_lower, prev_upper, rxn.lower_bound, rxn.upper_bound
+                )
+            continue
+
+        # If we have a meaningful WT flux, compute target flux based on factor
+        target_flux = abs(wt_flux) * factor  # fraction of WT (for knockdown) or multiplier (for overexp use below)
+
+        prev_upper = rxn.upper_bound
+        prev_lower = rxn.lower_bound
+
+        if change_type.startswith('knockdown'):
+            # For knockdown tags, factor is the fraction to keep (e.g., 0.2 keeps 20%).
+            # We set the upper bound (for forward flux) to target_flux and leave lower bound unchanged
+            # unless reaction was previously reversible and WT flux was negative.
+            if wt_flux >= 0:
+                # forward direction dominated in WT
+                rxn.upper_bound = min(max(target_flux, 0.0), cap_value)
+                # ensure lower bound is not greater than upper bound
+                if rxn.lower_bound > rxn.upper_bound:
+                    rxn.lower_bound = min(0.0, rxn.upper_bound)
+            else:
+                # WT flux negative -> reverse direction dominated
+                rxn.lower_bound = max(min(-target_flux, 0.0), -cap_value)
+                if rxn.upper_bound < rxn.lower_bound:
+                    rxn.upper_bound = max(0.0, rxn.lower_bound)
+
+            logger.info(
+                "Applied knockdown to %s: WT_flux=%.6f, factor=%.3f, bounds (%.6f -> %.6f)",
+                rxn_id, wt_flux, factor, prev_upper, rxn.upper_bound
+            )
+
+        else:
+            # Overexpression: increase capacity. We choose a conservative rule:
+            # new_upper = max(current_upper * factor, abs(WT_flux) * factor)
+            # This ensures that if WT flux was small but current bound is large, we still scale the bound,
+            # and if WT flux was large, we allow capacity proportional to observed flux.
+            new_upper_candidate = max(prev_upper * factor if prev_upper > 0 else 0.0,
+                                      target_flux * factor if target_flux > 0 else 0.0)
+            # also ensure at least prev_upper (do not shrink)
+            new_upper = min(max(prev_upper, new_upper_candidate), cap_value)
+
+            # For reverse direction, scale lower bound similarly (more negative)
+            if prev_lower < 0:
+                new_lower_candidate = min(prev_lower * factor, -abs(target_flux) * factor)
+                new_lower = max(new_lower_candidate, -cap_value)
+            else:
+                new_lower = prev_lower
+
+            rxn.upper_bound = new_upper
+            rxn.lower_bound = new_lower
+
+            logger.info(
+                "Applied overexpression to %s: WT_flux=%.6f, factor=%.3f, bounds (%.6f, %.6f) -> (%.6f, %.6f)",
+                rxn_id, wt_flux, factor, prev_lower, prev_upper, rxn.lower_bound, rxn.upper_bound
+            )
+
     return engineered
+
 
 def simulate_with_objective(model: cobra.Model, objective: str, environment: Dict) -> cobra.Solution:
     """
