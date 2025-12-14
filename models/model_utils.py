@@ -50,11 +50,11 @@ def create_engineered_strain(base_model: cobra.Model, modifications: Dict) -> co
                     
                     if current_upper > 0:  # Forward reaction
                         new_upper = current_upper * factor
-                        rxn.upper_bound = min(new_upper, 1000)  # Cap at reasonable value
+                        rxn.upper_bound = min(new_upper, 6000)  # Cap at reasonable value
                     
                     if current_lower < 0:  # Reverse reaction  
                         new_lower = current_lower * factor
-                        rxn.lower_bound = max(new_lower, -1000)
+                        rxn.lower_bound = max(new_lower, -6000)
                     
                     logger.info(f"Modified {rxn_id}: {change_type} ({current_upper:.2f} → {rxn.upper_bound:.2f})")
                     
