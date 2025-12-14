@@ -2,9 +2,6 @@
 """
 Systematic Multi-Environment Metabolic Engineering Evaluation for 5-ALA Production
 Q1 Journal Quality - Enhanced with Sensitivity and Robustness Analysis
-
-Comprehensively evaluates all genetic modification scenarios across four environmental
-conditions with advanced statistical analysis and visualization.
 """
 
 import cobra
@@ -17,33 +14,21 @@ import seaborn as sns
 from pathlib import Path
 import sys
 import os
+import logging
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from models.model_utils import create_engineered_strain, simulate_with_objective, calculate_yield_metrics
 
+# Configure logging so create_engineered_strain messages are visible
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
 def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Dict, 
                                          environments: Dict, objectives: Dict) -> pd.DataFrame:
     """
     Comprehensive evaluation of engineering scenarios across multiple environments
-    
-    Parameters:
-    -----------
-    base_model_paths : Dict
-        Dictionary mapping environment names to model paths
-    scenarios : Dict
-        Engineering scenarios with genetic modifications
-    environments : Dict
-        Environmental conditions for each environment
-    objectives : Dict
-        Optimization objectives
-        
-    Returns:
-    --------
-    pd.DataFrame
-        Comprehensive results across all environments and scenarios
     """
-    
     all_engineering_results = []
     
     for env_name, model_path in base_model_paths.items():
@@ -52,6 +37,7 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
         try:
             # Load environment-specific model
             model = cobra.io.read_sbml_model(str(model_path))
+            model.solver = "glpk"
             environment_config = environments.get(env_name)
             
             if not environment_config:
@@ -64,10 +50,19 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
                 
                 try:
                     # Create engineered strain
-                    engineered_model = create_engineered_strain(model, modifications)
+                    # Pass reference objectives and environment so baselines are computed correctly
+                    engineered_model = create_engineered_strain(
+                        model,
+                        modifications,
+                        reference_objectives=['max_biomass', 'max_ala'],
+                        environment=environment_config,
+                        objective_to_rxn={'max_biomass': 'BIOMASS_KT2440_WT3', 'max_ala': 'G1SAT'},
+                        cap_value=6000.0
+                    )
                     
                     # Test all objective functions
                     for obj_name, objective in objectives.items():
+                        # simulate_with_objective expects objective (reaction id or object) and environment
                         solution = simulate_with_objective(engineered_model, objective, environment_config)
                         
                         # Calculate yield metrics
@@ -84,14 +79,19 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
                             
                         yield_metrics = calculate_yield_metrics(solution, 'G1SAT', substrate_rxn)
                         
+                        # Use biomass flux for growth_rate (objective may be ALA)
+                        growth_flux = float(solution.fluxes.get('BIOMASS_KT2440_WT3', 0.0))
+                        ala_flux_gross = float(solution.fluxes.get('G1SAT', 0.0))
+                        ala_flux_net = yield_metrics['net_ala_flux']
+                        
                         # Store comprehensive results
                         result = {
                             'environment': env_name,
                             'scenario': scenario_name,
                             'objective': obj_name,
-                            'growth_rate': solution.objective_value,
-                            'ala_flux': solution.fluxes.get('G1SAT', 0),
-                            'ala_flux_net': yield_metrics['net_ala_flux'],
+                            'growth_rate': growth_flux,
+                            'ala_flux': ala_flux_gross,
+                            'ala_flux_net': ala_flux_net,
                             'ala_consumption': yield_metrics['ala_consumption_flux'],
                             'glucose_uptake': abs(solution.fluxes.get('EX_glc__D_e', 0)),
                             'solution_status': solution.status,
@@ -105,8 +105,7 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
                         
                         all_engineering_results.append(result)
                         
-                        print(f"    ✅ {obj_name}: Growth = {solution.objective_value:.4f}, "
-                              f"ALA = {yield_metrics['net_ala_flux']:.4f}")
+                        print(f"    ✅ {obj_name}: Growth = {growth_flux:.6f}, ALA_net = {ala_flux_net:.6f}")
                             
                 except Exception as e:
                     print(f"    ❌ Scenario {scenario_name} failed: {e}")
@@ -121,18 +120,7 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
 def calculate_robustness_metrics(engineering_df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate robustness metrics for engineering scenarios across environments
-    
-    Parameters:
-    -----------
-    engineering_df : pd.DataFrame
-        Comprehensive engineering results
-        
-    Returns:
-    --------
-    pd.DataFrame
-        Robustness analysis results
     """
-    
     robustness_results = []
     
     for scenario in engineering_df['scenario'].unique():
@@ -153,7 +141,6 @@ def calculate_robustness_metrics(engineering_df: pd.DataFrame) -> pd.DataFrame:
                 })
         
         if len(env_performance) > 0:
-            # Calculate robustness metrics
             ala_values = [p['ala_production'] for p in env_performance]
             growth_values = [p['growth_rate'] for p in env_performance]
             yield_values = [p['yield'] for p in env_performance]
@@ -178,20 +165,7 @@ def create_engineering_summary_visualization(engineering_df: pd.DataFrame,
                                            robustness_df: pd.DataFrame) -> plt.Figure:
     """
     Create comprehensive engineering summary visualization
-    
-    Parameters:
-    -----------
-    engineering_df : pd.DataFrame
-        Engineering results
-    robustness_df : pd.DataFrame
-        Robustness analysis results
-        
-    Returns:
-    --------
-    plt.Figure
-        Multi-panel summary figure
     """
-    
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
     
     # Filter for production objective
