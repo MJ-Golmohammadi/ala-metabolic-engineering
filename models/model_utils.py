@@ -8,7 +8,6 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
 import logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -72,114 +71,61 @@ def simulate_with_objective(model: cobra.Model, objective: str, environment: Dic
 
     Behavior:
     - Always apply environment constraints from YAML (carbon source uptake, etc.).
-    - When objective is ALA (G1SAT), compute biomass optimum on a COPY of the model
-      to avoid accidental rollback of environment bounds, then cap biomass upper bound
-      on the original model and re-apply environment constraints.
-    - Extensive logging is included to help debug why environment bounds might not stick.
+    - When objective is biomass, simply optimize for growth.
+    - When objective is ALA (G1SAT), first compute the biomass optimum,
+      cap biomass upper bound to that optimum, then re-apply environment
+      constraints to ensure substrate uptake is correct, and finally optimize
+      for ALA production.
     """
 
-    # Ensure objective is a reaction id or a reaction object
-    try:
-        # If objective is a reaction id string, get the reaction object
-        if isinstance(objective, str) and objective in model.reactions:
-            objective_rxn = model.reactions.get_by_id(objective)
-        else:
-            objective_rxn = objective  # could be a reaction object or invalid
-    except Exception:
-        objective_rxn = objective
-
-    # Work inside a context so changes are reverted on exit; we will re-apply as needed
     with model:
         # Get biomass reaction and set permissive bounds initially
         biomass_rxn = model.reactions.get_by_id('BIOMASS_KT2440_WT3')
         biomass_rxn.lower_bound = 0
-        biomass_rxn.upper_bound = 6000.0
+        biomass_rxn.upper_bound = 6000.0  # Allow growth up to a large cap
 
-        # Step 1: Apply environment constraints from YAML and log what we set
-        logger.info("Applying environment constraints before any optimization.")
+        # Step 1: Apply environment constraints from YAML
         for rxn_id, bounds in environment.items():
             if rxn_id in model.reactions:
                 try:
                     model.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
-                    logger.info("  Applied bounds for %s: %s", rxn_id, tuple(bounds))
                 except Exception as e:
-                    logger.warning("  Could not set bounds for %s: %s", rxn_id, e)
-            else:
-                logger.warning("  Environment reaction %s not found in model.", rxn_id)
+                    logger.warning(f"Could not set bounds for {rxn_id}: {e}")
 
-        # If objective is ALA (G1SAT), compute biomass optimum on a copy to avoid side-effects
-        if isinstance(objective, str) and objective == 'G1SAT':
-            logger.info("Objective is G1SAT: computing biomass optimum on a model copy.")
-            try:
-                # Use a copy to compute biomass optimum so original model's environment remains intact
-                tmp = model.copy()
-                with tmp:
-                    # Ensure environment constraints are applied on the copy as well
-                    for rxn_id, bounds in environment.items():
-                        if rxn_id in tmp.reactions:
-                            try:
-                                tmp.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
-                            except Exception:
-                                pass
-                    # Set biomass objective on the copy and optimize
-                    tmp.objective = biomass_rxn
-                    sol_biomass = tmp.optimize()
-                    if sol_biomass.status == 'optimal':
-                        biomass_opt = float(sol_biomass.fluxes.get('BIOMASS_KT2440_WT3', sol_biomass.objective_value))
-                        logger.info("  Biomass optimum on copy: %f", biomass_opt)
-                    else:
-                        biomass_opt = 1.0
-                        logger.warning("  Biomass optimization on copy not optimal; using fallback biomass_opt=1.0")
-            except Exception as e:
-                biomass_opt = 1.0
-                logger.error("  Error computing biomass optimum on copy: %s", e)
+        # Step 2: Special handling if objective is ALA production
+        if objective == 'G1SAT':
+            # Compute biomass optimum first
+            model.objective = biomass_rxn
+            sol_biomass = model.optimize()
+            biomass_opt = sol_biomass.objective_value if sol_biomass.status == 'optimal' else 1.0
 
-            # Cap biomass upper bound on the original model
-            prev_upper = biomass_rxn.upper_bound
-            biomass_rxn.upper_bound = max(0.0, float(biomass_opt))
-            logger.info("  Capped biomass upper bound: %f -> %f", prev_upper, biomass_rxn.upper_bound)
+            # Cap biomass upper bound to realistic maximum
+            biomass_rxn.upper_bound = biomass_opt
 
-            # Re-apply environment constraints on the original model to ensure they persist
-            logger.info("Re-applying environment constraints after biomass capping.")
+            # ✅ Re-apply environment constraints after biomass optimization
             for rxn_id, bounds in environment.items():
                 if rxn_id in model.reactions:
                     try:
                         model.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
-                        logger.info("  Re-applied bounds for %s: %s", rxn_id, tuple(bounds))
                     except Exception as e:
-                        logger.warning("  Could not re-set bounds for %s: %s", rxn_id, e)
+                        logger.warning(f"Could not re-set bounds for {rxn_id}: {e}")
 
-        # If objective is not G1SAT, we already applied environment and can proceed
-
-        # Step 3: Set the desired objective (use reaction object if possible)
+        # Step 3: Set the desired objective (biomass or ALA)
         try:
             if isinstance(objective, str) and objective in model.reactions:
                 model.objective = model.reactions.get_by_id(objective)
             else:
                 model.objective = objective
         except Exception as e:
-            logger.error("Error setting objective %s: %s", objective, e)
+            logger.error(f"Error setting objective {objective}: {e}")
             return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
-
-        # Log final bounds for key reactions (debugging snapshot)
-        debug_keys = ['BIOMASS_KT2440_WT3']
-        # include substrate exchange if present in environment
-        for k in environment.keys():
-            if k.startswith('EX_'):
-                debug_keys.append(k)
-        logger.info("Final bounds snapshot before optimization:")
-        for rxn_id in debug_keys:
-            if rxn_id in model.reactions:
-                r = model.reactions.get_by_id(rxn_id)
-                logger.info("  %s bounds = (%f, %f)", rxn_id, float(r.lower_bound), float(r.upper_bound))
 
         # Step 4: Perform flux balance analysis
         try:
             solution = model.optimize()
-            logger.info("Optimization status: %s, objective_value: %s", solution.status, solution.objective_value)
             return solution
         except Exception as e:
-            logger.error("Optimization failed: %s", e)
+            logger.error(f"Optimization failed: {e}")
             return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
 
 
