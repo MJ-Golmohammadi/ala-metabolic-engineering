@@ -65,14 +65,26 @@ def create_engineered_strain(base_model: cobra.Model, modifications: Dict) -> co
     
     return engineered
 
-
 def simulate_with_objective(model: cobra.Model, objective: str, environment: Dict) -> cobra.Solution:
+    """
+    Simulate the model under a given objective and environment constraints.
+
+    Key behavior:
+    - Always apply environment constraints from YAML (carbon source uptake, etc.).
+    - When objective is biomass, simply optimize for growth.
+    - When objective is ALA (G1SAT), first compute the biomass optimum,
+      cap biomass upper bound to that optimum, then re-apply environment
+      constraints to ensure substrate uptake is correct, and finally optimize
+      for ALA production.
+    """
+
     with model:
+        # Get biomass reaction
         biomass_rxn = model.reactions.get_by_id('BIOMASS_KT2440_WT3')
         biomass_rxn.lower_bound = 0
-        biomass_rxn.upper_bound = 1000  # Allow growth
+        biomass_rxn.upper_bound = 6000  # Allow growth up to a large cap
 
-        # Apply environmental constraints
+        # Step 1: Apply environment constraints from YAML
         for rxn_id, bounds in environment.items():
             if rxn_id in model.reactions:
                 try:
@@ -80,25 +92,33 @@ def simulate_with_objective(model: cobra.Model, objective: str, environment: Dic
                 except Exception as e:
                     logger.warning(f"Could not set bounds for {rxn_id}: {e}")
 
-        # When maximizing ALA (G1SAT), cap biomass upper bound to its optimal value.
-        # This prevents unrealistic growth rates (>1 h⁻¹) that occur when product objective uncouples from biomass.
-
+        # Step 2: Special handling if objective is ALA production
         if objective == 'G1SAT':
-            # First compute biomass optimum
+            # Compute biomass optimum first
             model.objective = biomass_rxn
             sol_biomass = model.optimize()
             biomass_opt = sol_biomass.objective_value if sol_biomass.status == 'optimal' else 1.0
+
             # Cap biomass upper bound to realistic maximum
             biomass_rxn.upper_bound = biomass_opt
 
-        # Set objective function
+            # ✅ Re-apply environment constraints after biomass optimization
+            # This ensures substrate uptake from YAML is preserved
+            for rxn_id, bounds in environment.items():
+                if rxn_id in model.reactions:
+                    try:
+                        model.reactions.get_by_id(rxn_id).bounds = bounds
+                    except Exception as e:
+                        logger.warning(f"Could not reset bounds for {rxn_id}: {e}")
+
+        # Step 3: Set the desired objective (biomass or ALA)
         try:
             model.objective = objective
         except Exception as e:
             logger.error(f"Error setting objective {objective}: {e}")
             return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
 
-        # Perform flux balance analysis
+        # Step 4: Perform flux balance analysis
         try:
             solution = model.optimize()
             return solution
