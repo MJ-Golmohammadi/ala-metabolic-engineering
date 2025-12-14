@@ -17,10 +17,15 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import seaborn as sns
+import logging
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from models.model_utils import simulate_with_objective, calculate_yield_metrics
+
+# Configure basic logging so debug/info messages from model_utils are visible
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 # Set publication-quality plotting parameters
 plt.rcParams.update({
@@ -61,20 +66,6 @@ def perform_sensitivity_analysis(model: cobra.Model, environment: Dict,
                                parameter_range: np.ndarray = np.linspace(0.5, 2.0, 10)) -> pd.DataFrame:
     """
     Perform sensitivity analysis on key environmental parameters
-    
-    Parameters:
-    -----------
-    model : cobra.Model
-        Metabolic model
-    environment : Dict
-        Base environmental conditions
-    parameter_range : np.ndarray
-        Range of parameter variations to test
-        
-    Returns:
-    --------
-    pd.DataFrame
-        Sensitivity analysis results
     """
     sensitivity_results = []
     base_conditions = environment.copy()
@@ -102,14 +93,15 @@ def perform_sensitivity_analysis(model: cobra.Model, environment: Dict,
                     
                         solution = model.optimize()
 
-                        
                         if solution.status == 'optimal':
-                            ala_flux = solution.fluxes.get('G1SAT', 0)
+                            ala_flux = float(solution.fluxes.get('G1SAT', 0.0))
+                            # growth from biomass flux
+                            growth_flux = float(solution.fluxes.get('BIOMASS_KT2440_WT3', 0.0))
                             sensitivity_results.append({
                                 'parameter': carbon_rxn,
                                 'variation_factor': factor,
                                 'objective': obj_name,
-                                'growth_rate': solution.objective_value,
+                                'growth_rate': growth_flux,
                                 'ala_flux': ala_flux,
                                 'environment': 'sensitivity_test'
                             })
@@ -120,20 +112,6 @@ def analyze_gene_essentiality(model: cobra.Model, environment: Dict,
                             target_genes: List[str] = None) -> pd.DataFrame:
     """
     Perform gene essentiality analysis using COBRApy single gene deletion
-    
-    Parameters:
-    -----------
-    model : cobra.Model
-        Metabolic model
-    environment : Dict
-        Environmental conditions
-    target_genes : List[str]
-        List of gene IDs to test for essentiality
-        
-    Returns:
-    --------
-    pd.DataFrame
-        Gene essentiality analysis results
     """
     from cobra.flux_analysis import single_gene_deletion
     
@@ -153,31 +131,19 @@ def analyze_gene_essentiality(model: cobra.Model, environment: Dict,
         deletion_results = single_gene_deletion(model, target_genes)
         
         # Iterate over DataFrame rows returned by single_gene_deletion
-        # Professional comment: COBRApy returns a pandas DataFrame, not a list of dicts
         for gene_id, row in deletion_results.iterrows():
             essentiality_results.append({
-                'gene': gene_id,  # Gene ID tested for essentiality
-                'growth_rate': row['growth'],  # Growth rate after deletion
+                'gene': gene_id,
+                'growth_rate': row['growth'],
                 'status': 'essential' if row['growth'] < 0.01 else 'non_essential',
-                'environment': 'Glu'  # Base environment for essentiality test
+                'environment': 'Glu'
             })
 
-    
     return pd.DataFrame(essentiality_results)
 
 def create_multi_environment_summary(simulation_results: pd.DataFrame) -> plt.Figure:
     """
     Create comprehensive multi-environment summary visualization
-    
-    Parameters:
-    -----------
-    simulation_results : pd.DataFrame
-        Results from multi-environment simulations
-        
-    Returns:
-    --------
-    plt.Figure
-        Multi-panel summary figure
     """
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
     
@@ -223,16 +189,13 @@ def create_multi_environment_summary(simulation_results: pd.DataFrame) -> plt.Fi
             growth_mean = env_data['growth_rate'].mean()
             
             if growth_mean is not None and growth_mean > 1e-9:
-                # Efficiency defined as ALA flux per unit growth.
-                # Guard against division by zero when growth_mean ≈ 0 to prevent invalid values.
                 efficiency = ala_mean / growth_mean
             else:
-                efficiency = float('nan')  # or 0.0 if you prefer to treat no-growth as zero efficiency
+                efficiency = float('nan')
             efficiencies.append(efficiency)
         else:
             efficiencies.append(0.0)
 
-    
     ax4.bar(environments, efficiencies, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'], alpha=0.8)
     ax4.set_ylabel('Production Efficiency (ALA/Growth)', fontweight='bold')
     ax4.set_title('D. Metabolic Efficiency by Environment', fontweight='bold', pad=20)
@@ -242,50 +205,53 @@ def create_multi_environment_summary(simulation_results: pd.DataFrame) -> plt.Fi
     return fig
 
 def optimize_max_ala_with_min_growth(
-    model,
-    ala_obj_id: str = "G1SAT",                # Reaction ID for ALA production
-    biomass_id: str = "BIOMASS_KT2440_WT3",   # Reaction ID for biomass growth
-    b_min_fraction: float = 5.0              # Fraction of reference growth to enforce
+    model: cobra.Model,
+    ala_obj_id: str = "G1SAT",
+    biomass_id: str = "BIOMASS_KT2440_WT3",
+    b_min_fraction: float = 0.01,
+    environment: Dict = None
 ):
     """
     Optimize ALA production while enforcing a minimum biomass growth (ε-constraint).
-
-    Parameters
-    ----------
-    model : cobra.Model
-        The metabolic model to optimize.
-    ala_obj_id : str
-        Reaction ID for ALA production (default: "G1SAT").
-    biomass_id : str
-        Reaction ID for biomass growth (default: "BIOMASS_KT2440_WT3").
-    b_min_fraction : float
-        Fraction of reference biomass growth to enforce as a minimum (default: 0.01 = 1%).
-
-    Returns
-    -------
-    cobra.Solution
-        Solution object with ALA maximized subject to minimal growth constraint.
+    This version applies environment constraints and computes reference growth on a COPY
+    to avoid side-effects, then enforces the minimum growth on the original model.
     """
+    # Compute reference growth on a copy with environment applied
+    tmp = model.copy()
+    if environment:
+        for rxn_id, bounds in environment.items():
+            if rxn_id in tmp.reactions:
+                tmp.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
+    # set biomass objective on the copy
+    try:
+        tmp.objective = tmp.reactions.get_by_id(biomass_id)
+    except Exception:
+        tmp.objective = biomass_id
+    ref_solution = tmp.optimize()
+    ref_growth = max(0.0, float(ref_solution.fluxes.get(biomass_id, 0.0))) if ref_solution.status == 'optimal' else 0.0
 
-    # Step 1: Compute reference growth under biomass objective
-    with model:
-        model.objective = biomass_id
-        ref_solution = model.optimize()
-        ref_growth = max(0.0, float(ref_solution.fluxes.get(biomass_id, 0.0)))
-
-    # Step 2: Define minimum growth requirement (ε-constraint)
+    # Define minimum growth requirement
     b_min = b_min_fraction * ref_growth
 
-    # Step 3: Apply growth lower bound
+    # Apply growth lower bound on the original model (preserve previous lb)
     biomass_rxn = model.reactions.get_by_id(biomass_id)
     prev_lb = biomass_rxn.lower_bound
     biomass_rxn.lower_bound = max(prev_lb, b_min)
 
-    # Step 4: Optimize for ALA production
-    model.objective = ala_obj_id
+    # Apply environment to the original model before optimizing for ALA
+    if environment:
+        for rxn_id, bounds in environment.items():
+            if rxn_id in model.reactions:
+                model.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
+
+    # Optimize for ALA production
+    try:
+        model.objective = model.reactions.get_by_id(ala_obj_id)
+    except Exception:
+        model.objective = ala_obj_id
     solution = model.optimize()
 
-    # Step 5: Restore original biomass lower bound
+    # Restore original biomass lower bound
     biomass_rxn.lower_bound = prev_lb
 
     return solution
@@ -333,7 +299,8 @@ def main():
                                 model,
                                 ala_obj_id='G1SAT',
                                 biomass_id='BIOMASS_KT2440_WT3',
-                                b_min_fraction=0.01  # enforce at least 1% of reference growth
+                                b_min_fraction=0.01,  # enforce at least 1% of reference growth
+                                environment=environment_config
                             )
                         else:
                             solution = simulate_with_objective(model, objective, environment_config)
@@ -362,9 +329,9 @@ def main():
                         result = {
                             'environment': env_name,
                             'objective': obj_name,
-                            'growth_rate': growth_flux,              # biomass flux
-                            'ala_flux': ala_flux_gross,              # gross ALA flux
-                            'ala_flux_net': ala_flux_net,            # net ALA flux
+                            'growth_rate': growth_flux,
+                            'ala_flux': ala_flux_gross,
+                            'ala_flux_net': ala_flux_net,
                             'ala_consumption': yield_metrics['ala_consumption_flux'],
                             'solution_status': solution.status,
                             'modifications': 'wild_type',
