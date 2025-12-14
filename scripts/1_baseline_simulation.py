@@ -94,9 +94,14 @@ def perform_sensitivity_analysis(model: cobra.Model, environment: Dict,
                             model.reactions.get_by_id(rxn_id).bounds = bounds
                     
                     # Test both objectives
-                    for obj_name in ['max_biomass']:
-                        model.objective = obj_name
+                    for obj_name in ['max_biomass', 'max_ala']:
+                        if obj_name == 'max_biomass':
+                            model.objective = model.reactions.get_by_id('BIOMASS_KT2440_WT3')
+                        elif obj_name == 'max_ala':
+                            model.objective = model.reactions.get_by_id('G1SAT')
+                    
                         solution = model.optimize()
+
                         
                         if solution.status == 'optimal':
                             ala_flux = solution.fluxes.get('G1SAT', 0)
