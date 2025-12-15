@@ -45,11 +45,11 @@ CONDITIONS = {
 }
 
 # Global caps requested by user
-UPPER_CAP = 6000.0
-LOWER_CAP = -6000.0
+UPPER_CAP = 40.0
+LOWER_CAP = -40.0
 
-FLUX_CAP = 6000
-GENERAL_SCALE = 10
+FLUX_CAP = 40
+GENERAL_SCALE = 0.00001
 DG_SCALE1 = 100      # scaling factor for bounds
 DG_SCALE2 = 60
 
@@ -222,8 +222,8 @@ def get_bounds_from_dg_file(rxn_id: str, dg_map: dict):
         ub = int((50 / math.sqrt(abs(dg))) * GENERAL_SCALE)
         return 0.0, float(ub)
     else:
-        ub = 100.0
-        lb = -100.0
+        ub = 100.0 * GENERAL_SCALE
+        lb = -100.0 * GENERAL_SCALE
         return float(lb), float(ub)
 
 # -----------------------------------------------------------------------------
@@ -364,7 +364,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
                     final_ub = 100 * GENERAL_SCALE
                 else:
                     final_lb = 0.0
-                    final_ub = 1000.0
+                    final_ub = 1000.0 * GENERAL_SCALE
                 final_lb, final_ub = cap_bounds(final_lb, final_ub)
                 rxn.lower_bound = float(final_lb)
                 rxn.upper_bound = float(final_ub)
@@ -409,7 +409,7 @@ def constrain_model(condition: str, expr_column: str, dg_map: dict, essential_ma
 
             # Safety check and cap
             if final_ub < final_lb:
-                final_lb, final_ub = -100.0, 100.0
+                final_lb, final_ub = -100.0 * GENERAL_SCALE, 100.0 * GENERAL_SCALE
             final_lb, final_ub = cap_bounds(final_lb, final_ub)
 
             rxn.lower_bound = float(final_lb)
