@@ -15,7 +15,7 @@ from pathlib import Path
 import sys
 import os
 import logging
-
+logging.getLogger('optlang').setLevel(logging.WARNING)
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from models.model_utils import create_engineered_strain, simulate_with_objective, calculate_yield_metrics
