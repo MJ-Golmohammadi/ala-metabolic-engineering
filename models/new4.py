@@ -49,7 +49,7 @@ UPPER_CAP = 40.0
 LOWER_CAP = -40.0
 
 FLUX_CAP = 40
-GENERAL_SCALE = 0.00001
+GENERAL_SCALE = 10
 DG_SCALE1 = 100      # scaling factor for bounds
 DG_SCALE2 = 60
 
