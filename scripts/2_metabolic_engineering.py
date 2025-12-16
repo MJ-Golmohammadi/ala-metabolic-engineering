@@ -17,7 +17,9 @@ import os
 import logging
 logging.getLogger('optlang').setLevel(logging.WARNING)
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-
+sys.stdout = open(os.devnull, 'w')
+# load/initialize model here
+sys.stdout = sys.__stdout__
 from models.model_utils import create_engineered_strain, simulate_with_objective, calculate_yield_metrics
 
 # Configure logging so create_engineered_strain messages are visible
