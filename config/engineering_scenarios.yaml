@@ -109,10 +109,10 @@ engineering_scenarios:
   
   # Single modification scenarios for individual effect analysis
   OE_hemA_only:
-    GLUTRR: overexpress_1.01x
+    GLUTRR: overexpress_1.1x
     
   OE_hemL_only:
-    G1SAT: overexpress_1.01x
+    G1SAT: overexpress_1.1x
     
   OE_gltX_only:
     GLUTRS: overexpress_1.1x
