@@ -98,18 +98,31 @@ def create_engineered_strain(
     if reference_objectives is None:
         reference_objectives = ['max_biomass', 'max_ala']
 
-    # Modification factors (fraction to keep for knockdown, multiplier for overexp)
-    modification_factors = {
-        'knockout': 0.0,
-        'knockdown_80': 0.2,    # keep 20% of WT
-        'knockdown_40': 0.6,    # keep 60% of WT
-        'knockdown_30': 0.7,    # keep 70% of WT
-        'overexpress_1.5x': 1.5,
-        'overexpress_2x': 2.0,
-        'overexpress_3x': 3.0,
-        'overexpress_5x': 5.0,
-        # Generic multiplier tag support (e.g., 'overexpress_1.6x') is not parsed here.
-    }
+
+def parse_modification_factor(change_type: str) -> float:
+    """
+    Dynamically parse modification tag into a numeric factor.
+    Examples:
+      'knockout' -> 0.0
+      'knockdown_80' -> 0.2   (keep 20%)
+      'knockdown_25' -> 0.75  (keep 75%)
+      'overexpress_1.6x' -> 1.6
+      'overexpress_10x' -> 10.0
+    """
+    if change_type == "knockout":
+        return 0.0
+    elif change_type.startswith("knockdown_"):
+        # extract number after underscore
+        perc = float(change_type.split("_")[1])
+        # e.g. knockdown_80 means 80% reduction, so keep 20%
+        return 1.0 - (perc / 100.0)
+    elif change_type.startswith("overexpress_"):
+        # extract number before 'x'
+        val = change_type.split("_")[1].replace("x", "")
+        return float(val)
+    else:
+        raise ValueError(f"Unknown modification type: {change_type}")
+
 
     # Work on a copy to avoid mutating the original model
     engineered = base_model.copy()
