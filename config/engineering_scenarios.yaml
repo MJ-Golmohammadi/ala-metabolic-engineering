@@ -109,112 +109,12 @@ engineering_scenarios:
   
   # Single modification scenarios for individual effect analysis
   OE_hemA_only:
-    GLUTRR: overexpress_1.1x
+    GLUTRR: overexpress_1.01x
     
   OE_hemL_only:
-    G1SAT: overexpress_1.1x
+    G1SAT: overexpress_1.01x
     
-  OE_gltX_only:
-    GLUTRS: overexpress_1.1x
-    
-  OE_gdhA_only:
-    GLUDy: overexpress_1.1x
-    
-  OE_gltB_only:
-    GLUSy: overexpress_1.1x
-    
-  OE_icd_only:
-    ICDHyr: overexpress_1.1x
-    
-  OE_ppc_only:
-    PPC: overexpress_1.1x
-    
-  OE_zwfA_only:
-    G6PDH2r: overexpress_1.1x
-    
-  OE_gntZ_only:
-    GND: overexpress_1.1x
-    
-  OE_sthA_only:
-    NADTRHD: overexpress_1.1x
-    
-  OE_sodA_only:
-    SPODM: overexpress_1.1x
-    
-  OE_katG_only:
-    CAT: overexpress_1.1x
 
-  KO_hemB_only:
-    PPBNGS: knockdown_10
-    
-  KD_proB_only:
-    GLU5K: knockdown_10
-
-  # Core pathway enhancement scenarios
-  Core_C5_Enhancement:
-    GLUTRR: overexpress_1.1x    # hemA - First committed step
-    G1SAT: overexpress_1.1x     # hemL - Prevents GSA accumulation
-    PPBNGS: knockdown_10      # hemB - Reduces ALA consumption
-    GLUTRS: overexpress_1.1x    # gltX - Ensures substrate supply
-
-  # Full engineering scenario combining all modifications
-  Comprehensive_C5_Optimization:
-    GLUTRR: overexpress_5x    # hemA
-    G1SAT: overexpress_5x     # hemL  
-    GLUTRS: overexpress_2x    # gltX
-    GLUDy: overexpress_2x     # gdhA - Glutamate supply
-    GLUSy: overexpress_2x     # gltB - Glutamate synthesis
-    ICDHyr: overexpress_3x    # icd - TCA cycle flux
-    PPC: overexpress_1.5x     # ppc - Anaplerotic reaction
-    G6PDH2r: overexpress_3x   # zwfA - PPP flux, NADPH
-    GND: overexpress_2x       # gntZ - PPP flux
-    NADTRHD: overexpress_1.5x # sthA - NADPH regeneration
-    SPODM: overexpress_2x     # sodA - Oxidative stress
-    CAT: overexpress_2x       # katG - Oxidative stress
-    PPBNGS: knockdown_80      # hemB - Consumption reduction
-    GLU5K: knockdown_40       # proB - Competitive pathway
-
-  # Balanced approach for growth-production trade-off
-  Balanced_Approach:
-    GLUTRR: overexpress_5x    # hemA
-    G1SAT: overexpress_5x     # hemL
-    PPBNGS: knockdown_80      # hemB  
-    GLUTRS: overexpress_2x    # gltX
-    GLUSy: overexpress_2x     # gltB
-    G6PDH2r: overexpress_3x   # zwfA
-    CAT: overexpress_2x       # katG
-
-  # Data-driven design based on expression patterns
-  Consistency_Driven_Design:
-    GLUTRR: overexpress_5x    # hemA
-    GLUTRS: overexpress_2x    # gltX
-    GLUDy: overexpress_2x     # gdhA
-    GLUSy: overexpress_2x     # gltB
-    ICDHyr: overexpress_3x    # icd
-    G6PDH2r: overexpress_3x   # zwfA
-    NADTRHD: overexpress_1.5x # sthA
-    CAT: overexpress_2x       # katG
-    GLU5K: knockdown_40       # proB
-
-  # Additional specialized scenarios
-  Precursor_Focused:
-    GLUDy: overexpress_3x     # gdhA - Major glutamate source
-    GLUSy: overexpress_2x     # gltB - Glutamate synthesis
-    ICDHyr: overexpress_3x    # icd - α-ketoglutarate supply
-    PPC: overexpress_2x       # ppc - Anaplerosis
-    GLUTRR: overexpress_3x    # hemA - C5 pathway
-
-  Redox_Balanced:
-    G6PDH2r: overexpress_3x   # zwfA - NADPH generation
-    GND: overexpress_2x       # gntZ - NADPH generation  
-    NADTRHD: overexpress_2x   # sthA - NADPH transhydrogenase
-    GLUTRR: overexpress_3x    # hemA - NADPH consumer
-    CAT: overexpress_2x       # katG - Oxidative protection
-
-  Minimal_Modifications:
-    GLUTRR: overexpress_5x    # hemA - Key bottleneck
-    PPBNGS: knockdown_80      # hemB - Major consumer
-    # Only 2 modifications for high impact/low complexity
 
 objectives:
   # Optimization objectives for multi-objective analysis
