@@ -109,53 +109,53 @@ engineering_scenarios:
   
   # Single modification scenarios for individual effect analysis
   OE_hemA_only:
-    GLUTRR: overexpress_1.5x
+    GLUTRR: overexpress_1.1x
     
   OE_hemL_only:
-    G1SAT: overexpress_1.5x
+    G1SAT: overexpress_1.1x
     
   OE_gltX_only:
-    GLUTRS: overexpress_1.5x
+    GLUTRS: overexpress_1.1x
     
   OE_gdhA_only:
-    GLUDy: overexpress_2x
+    GLUDy: overexpress_1.1x
     
   OE_gltB_only:
-    GLUSy: overexpress_2x
+    GLUSy: overexpress_1.1x
     
   OE_icd_only:
-    ICDHyr: overexpress_3x
+    ICDHyr: overexpress_1.1x
     
   OE_ppc_only:
-    PPC: overexpress_1.5x
+    PPC: overexpress_1.1x
     
   OE_zwfA_only:
-    G6PDH2r: overexpress_3x
+    G6PDH2r: overexpress_1.1x
     
   OE_gntZ_only:
-    GND: overexpress_2x
+    GND: overexpress_1.1x
     
   OE_sthA_only:
-    NADTRHD: overexpress_1.5x
+    NADTRHD: overexpress_1.1x
     
   OE_sodA_only:
-    SPODM: overexpress_2x
+    SPODM: overexpress_1.1x
     
   OE_katG_only:
-    CAT: overexpress_2x
+    CAT: overexpress_1.1x
 
   KO_hemB_only:
-    PPBNGS: knockdown_40
+    PPBNGS: knockdown_10
     
   KD_proB_only:
-    GLU5K: knockdown_40
+    GLU5K: knockdown_10
 
   # Core pathway enhancement scenarios
   Core_C5_Enhancement:
-    GLUTRR: overexpress_1.5x    # hemA - First committed step
-    G1SAT: overexpress_1.5x     # hemL - Prevents GSA accumulation
-    PPBNGS: knockdown_40      # hemB - Reduces ALA consumption
-    GLUTRS: overexpress_1.5x    # gltX - Ensures substrate supply
+    GLUTRR: overexpress_1.1x    # hemA - First committed step
+    G1SAT: overexpress_1.1x     # hemL - Prevents GSA accumulation
+    PPBNGS: knockdown_10      # hemB - Reduces ALA consumption
+    GLUTRS: overexpress_1.1x    # gltX - Ensures substrate supply
 
   # Full engineering scenario combining all modifications
   Comprehensive_C5_Optimization:
