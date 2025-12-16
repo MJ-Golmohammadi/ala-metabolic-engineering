@@ -311,7 +311,7 @@ for rxn_id, change_type in modifications.items():
                 rxn.lower_bound = -unsigned_target
             logger.info(f"Applied overexpression (non-locked) to {rxn_id}: bounds -> ({rxn.lower_bound:.6f}, {rxn.upper_bound:.6f})")
 
-    return engineered
+  return engineered
 
 
 def simulate_with_objective(model: cobra.Model, objective: str, environment: Dict) -> cobra.Solution:
