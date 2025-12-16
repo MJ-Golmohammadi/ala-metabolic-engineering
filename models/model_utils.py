@@ -147,171 +147,113 @@ def _parse_modification_factor(change_type: str) -> float:
     engineered = base_model.copy()
 
 
-# Helper: apply environment bounds to a model (non-destructive)
-def _apply_environment(m: cobra.Model, env: Dict):
-    if not env:
-        return
-    for rxn_id, bounds in env.items():
-        if rxn_id in m.reactions:
-            try:
-                m.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
-            except Exception:
-                # ignore individual failures; caller can inspect logs if needed
-                logger.debug(f"Could not set environment bound for {rxn_id}")
+ # Helper: apply environment bounds
+    def _apply_environment(m: cobra.Model, env: Dict):
+        if not env:
+            return
+        for rxn_id, bounds in env.items():
+            if rxn_id in m.reactions:
+                try:
+                    m.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
+                except Exception:
+                    logger.debug(f"Could not set environment bound for {rxn_id}")
 
-# Build set of reactions to check
-reactions_to_check = set(modifications.keys())
+    # Build set of reactions to check
+    reactions_to_check = set(modifications.keys())
+    wt_flux_baseline: Dict[str, float] = {r: 0.0 for r in reactions_to_check}
 
-# Compute WT flux baseline for each reaction across reference objectives
-wt_flux_baseline: Dict[str, float] = {r: 0.0 for r in reactions_to_check}
-
-for ref_obj in reference_objectives:
-    ref_rxn_id = objective_to_rxn.get(ref_obj)
-    if ref_rxn_id is None or ref_rxn_id not in base_model.reactions:
-        logger.debug(f"Reference objective {ref_obj} not found in model; skipping")
-        continue
-
-    tmp = base_model.copy()
-    _apply_environment(tmp, environment)
-
-    # Set objective
-    try:
-        tmp.objective = tmp.reactions.get_by_id(ref_rxn_id)
-    except Exception:
-        tmp.objective = ref_rxn_id
-
-    try:
-        sol = tmp.optimize()
-        if sol.status != 'optimal':
-            logger.debug(f"WT solve for {ref_obj} not optimal (status={sol.status}); skipping")
+    # Compute WT flux baseline
+    for ref_obj in reference_objectives:
+        ref_rxn_id = objective_to_rxn.get(ref_obj)
+        if ref_rxn_id is None or ref_rxn_id not in base_model.reactions:
             continue
-    except Exception as e:
-        logger.warning(f"WT optimization for {ref_obj} failed: {e}")
-        continue
+        tmp = base_model.copy()
+        _apply_environment(tmp, environment)
+        try:
+            tmp.objective = tmp.reactions.get_by_id(ref_rxn_id)
+        except Exception:
+            tmp.objective = ref_rxn_id
+        try:
+            sol = tmp.optimize()
+            if sol.status != 'optimal':
+                continue
+        except Exception:
+            continue
+        for rxn_id in reactions_to_check:
+            flux_val = float(sol.fluxes.get(rxn_id, 0.0))
+            if abs(flux_val) > abs(wt_flux_baseline.get(rxn_id, 0.0)):
+                wt_flux_baseline[rxn_id] = flux_val
 
-    # Record fluxes
-    for rxn_id in reactions_to_check:
-        flux_val = float(sol.fluxes.get(rxn_id, 0.0))
-        prev = wt_flux_baseline.get(rxn_id, 0.0)
-        if abs(flux_val) > abs(prev):
-            wt_flux_baseline[rxn_id] = flux_val
+    # Apply modifications
+    for rxn_id, change_type in modifications.items():
+        try:
+            factor = parse_modification_factor(change_type)
+        except ValueError as e:
+            logger.warning(f"{e} - skipping {rxn_id}")
+            continue
+        try:
+            rxn = engineered.reactions.get_by_id(rxn_id)
+        except KeyError:
+            logger.warning(f"Reaction {rxn_id} not found - skipping")
+            continue
 
-# Apply modifications using computed baselines (dynamic factors)
-for rxn_id, change_type in modifications.items():
-    # Parse dynamic factor from tag
-    try:
-        factor = _parse_modification_factor(change_type)
-    except ValueError as e:
-        logger.warning(f"{e} - skipping {rxn_id}")
-        continue
+        if factor == 0.0:
+            rxn.bounds = (0.0, 0.0)
+            continue
 
-    # Access reaction in engineered model
-    try:
-        rxn = engineered.reactions.get_by_id(rxn_id)
-    except KeyError:
-        logger.warning(f"Reaction {rxn_id} not found in engineered model - skipping")
-        continue
+        wt_flux = float(wt_flux_baseline.get(rxn_id, 0.0))
+        prev_lb, prev_ub = rxn.lower_bound, rxn.upper_bound
 
-    # Knockout handling
-    if factor == 0.0:
-        prev_bounds = (rxn.lower_bound, rxn.upper_bound)
-        rxn.bounds = (0.0, 0.0)
-        logger.info(f"Knocked out {rxn_id}: bounds {prev_bounds} -> (0.0, 0.0)")
-        continue
-
-    # Get WT baseline flux (signed)
-    wt_flux = float(wt_flux_baseline.get(rxn_id, 0.0))
-    prev_lower = rxn.lower_bound
-    prev_upper = rxn.upper_bound
-
-    # If WT flux is essentially zero, fallback to scaling current bounds
-    if abs(wt_flux) <= small_eps:
-        logger.info(f"WT flux for {rxn_id} is ~0. Using fallback scaling of current bounds.")
-        # Fallback logic for both knockdown and overexpression
-        if "knockdown" in change_type:
-            # scale current bounds toward zero
-            if prev_upper > 0:
-                new_ub = max(min(prev_upper * factor, cap_value), 0.0)
+        if abs(wt_flux) <= small_eps:
+            # fallback scaling
+            if "knockdown" in change_type:
+                new_ub = max(min(prev_ub * factor, cap_value), 0.0) if prev_ub > 0 else prev_ub
+                new_lb = min(max(prev_lb * factor, -cap_value), 0.0) if prev_lb < 0 else prev_lb
+                if lock_on_modify:
+                    target = new_ub if abs(new_ub) >= abs(new_lb) else new_lb
+                    target = max(min(target, cap_value), -cap_value)
+                    rxn.lower_bound = target
+                    rxn.upper_bound = target
+                else:
+                    rxn.lower_bound = new_lb
+                    rxn.upper_bound = new_ub
             else:
-                new_ub = prev_upper
-            if prev_lower < 0:
-                new_lb = min(max(prev_lower * factor, -cap_value), 0.0)
-            else:
-                new_lb = prev_lower
-
-            if lock_on_modify:
-                # Choose a target based on dominant bound direction
-                target = new_ub if abs(new_ub) >= abs(new_lb) else new_lb
-                target = max(min(target, cap_value), -cap_value)
-                rxn.lower_bound = target
-                rxn.upper_bound = target
-                logger.info(f"Locked {rxn_id} to fallback target {target:.6f} (bounds {prev_lower}->{rxn.lower_bound}, {prev_upper}->{rxn.upper_bound})")
-            else:
-                rxn.lower_bound = new_lb
-                rxn.upper_bound = new_ub
-                logger.info(f"Scaled bounds for {rxn_id}: ({prev_lower:.6f}, {prev_upper:.6f}) -> ({rxn.lower_bound:.6f}, {rxn.upper_bound:.6f})")
-
-        else:
-            # overexpression fallback: increase current capacity
-            if prev_upper > 0:
-                candidate = min(prev_upper * factor, cap_value)
-                signed_candidate = candidate
-            elif prev_lower < 0:
-                candidate = min(abs(prev_lower) * factor, cap_value)
-                signed_candidate = -candidate
-            else:
-                signed_candidate = 0.0
-
-            if lock_on_modify:
-                rxn.lower_bound = signed_candidate
-                rxn.upper_bound = signed_candidate
-                logger.info(f"Locked {rxn_id} to fallback overexpression target {signed_candidate:.6f}")
-            else:
-                if prev_upper > 0:
+                candidate = min(prev_ub * factor, cap_value) if prev_ub > 0 else (
+                    -min(abs(prev_lb) * factor, cap_value) if prev_lb < 0 else 0.0
+                )
+                if lock_on_modify:
+                    rxn.lower_bound = candidate
                     rxn.upper_bound = candidate
-                if prev_lower < 0:
-                    rxn.lower_bound = -candidate
-                logger.info(f"Expanded bounds for {rxn_id}: ({prev_lower:.6f}, {prev_upper:.6f}) -> ({rxn.lower_bound:.6f}, {rxn.upper_bound:.6f})")
-        continue
+                else:
+                    if prev_ub > 0:
+                        rxn.upper_bound = candidate
+                    if prev_lb < 0:
+                        rxn.lower_bound = candidate
+            continue
 
-    # Compute unsigned target flux based on WT baseline and factor
-    unsigned_target = min(abs(wt_flux) * factor, cap_value)
-    # Determine signed target according to WT direction
-    signed_target = unsigned_target if wt_flux >= 0 else -unsigned_target
+        unsigned_target = min(abs(wt_flux) * factor, cap_value)
+        signed_target = unsigned_target if wt_flux >= 0 else -unsigned_target
 
-    if "knockdown" in change_type:
-        # Reduce flux to fraction of WT and lock if requested
-        if lock_on_modify:
-            rxn.lower_bound = signed_target
-            rxn.upper_bound = signed_target
-            logger.info(f"Locked knockdown {rxn_id}: WT_flux={wt_flux:.6f}, factor={factor:.3f}, bounds -> ({signed_target:.6f}, {signed_target:.6f})")
-        else:
-            # safer non-locked constraint
-            if wt_flux >= 0:
-                rxn.upper_bound = signed_target
-                if rxn.lower_bound > rxn.upper_bound:
-                    rxn.lower_bound = min(0.0, rxn.upper_bound)
-            else:
+        if "knockdown" in change_type:
+            if lock_on_modify:
                 rxn.lower_bound = signed_target
-                if rxn.upper_bound < rxn.lower_bound:
-                    rxn.upper_bound = max(0.0, rxn.lower_bound)
-            logger.info(f"Applied knockdown (non-locked) to {rxn_id}: bounds -> ({rxn.lower_bound:.6f}, {rxn.upper_bound:.6f})")
-
-    else:
-        # Overexpression: increase capacity relative to WT and lock if requested
-        if lock_on_modify:
-            rxn.lower_bound = signed_target
-            rxn.upper_bound = signed_target
-            logger.info(f"Locked overexpression {rxn_id}: WT_flux={wt_flux:.6f}, factor={factor:.3f}, bounds -> ({signed_target:.6f}, {signed_target:.6f})")
+                rxn.upper_bound = signed_target
+            else:
+                if wt_flux >= 0:
+                    rxn.upper_bound = signed_target
+                else:
+                    rxn.lower_bound = signed_target
         else:
-            # Conservative expansion (non-locked)
-            if prev_upper < unsigned_target:
-                rxn.upper_bound = unsigned_target
-            if prev_lower > -unsigned_target and prev_lower < 0:
-                rxn.lower_bound = -unsigned_target
-            logger.info(f"Applied overexpression (non-locked) to {rxn_id}: bounds -> ({rxn.lower_bound:.6f}, {rxn.upper_bound:.6f})")
+            if lock_on_modify:
+                rxn.lower_bound = signed_target
+                rxn.upper_bound = signed_target
+            else:
+                if prev_ub < unsigned_target:
+                    rxn.upper_bound = unsigned_target
+                if prev_lb > -unsigned_target and prev_lb < 0:
+                    rxn.lower_bound = -unsigned_target
 
-      return engineered
+    return engineered
 
 
 def simulate_with_objective(model: cobra.Model, objective: str, environment: Dict) -> cobra.Solution:
