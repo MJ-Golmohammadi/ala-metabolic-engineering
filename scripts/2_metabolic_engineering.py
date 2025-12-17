@@ -49,40 +49,49 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
             
             # Number of constraints (rows) = number of metabolites
             num_row = len(model.metabolites)
-
-            # Create a HighsLp object
-            lp = highspy.HighsLp()
             
-            # Define number of variables (columns) and constraints (rows)
-            lp.num_col = num_col
-            lp.num_row = num_row
+            # Objective coefficients: 1 for objective reaction, 0 otherwise
+            obj = np.zeros(num_col)
+            objective_rxn = list(model.objective.keys())[0]  # first objective reaction
+            for i, rxn in enumerate(model.reactions):
+                if rxn.id == objective_rxn.id:
+                    obj[i] = 1.0
             
-            # Objective coefficients
-            lp.col_cost = obj.tolist()
+            col_cost  = obj.astype(np.float64)
+            col_lower = np.array([rxn.lower_bound for rxn in model.reactions], dtype=np.float64)
+            col_upper = np.array([rxn.upper_bound for rxn in model.reactions], dtype=np.float64)
             
-            # Bounds for each variable
-            lp.col_lower = [rxn.lower_bound for rxn in model.reactions]
-            lp.col_upper = [rxn.upper_bound for rxn in model.reactions]
+            row_lower = np.zeros(num_row, dtype=np.float64)
+            row_upper = np.zeros(num_row, dtype=np.float64)
             
-            # Row bounds (stoichiometric constraints = 0)
-            lp.row_lower = [0.0 for _ in model.metabolites]
-            lp.row_upper = [0.0 for _ in model.metabolites]
+            # Stoichiometric matrix in CSR format
+            from cobra.util.array import create_stoichiometric_matrix
+            S = create_stoichiometric_matrix(model).tocsr()
+            start = S.indptr.astype(np.int32)
+            index = S.indices.astype(np.int32)
+            value = S.data.astype(np.float64)
             
-            # Constraint matrix (CSR format)
-            S = cobra.util.array.create_stoichiometric_matrix(model).tocsr()
-            lp.a_matrix.start = S.indptr.tolist()
-            lp.a_matrix.index = S.indices.tolist()
-            lp.a_matrix.value = S.data.tolist()
-            
-            # Wrap into HighsModel
-            hm = highspy.HighsModel()
-            hm.lp = lp
-            
-            # Solve
+            # Initialize HiGHS solver
             highs = highspy.Highs()
-            highs.passModel(hm)
+            highs.setOptionValue("output_flag", True)
+            
+            # Pass model directly with arrays
+            highs.passModel(num_col, num_row,
+                            len(value),   # number of nonzeros
+                            1,            # sense=1 means maximize
+                            col_cost,
+                            col_lower,
+                            col_upper,
+                            row_lower,
+                            row_upper,
+                            start,
+                            index,
+                            value)
+            
+            # Run the solver
             highs.run()
             
+            # Get the solution
             solution = highs.getSolution()
             print("Objective:", solution.objective_value)
             print("Fluxes:", solution.col_value)
