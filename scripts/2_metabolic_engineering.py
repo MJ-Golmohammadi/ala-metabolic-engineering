@@ -53,15 +53,14 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
             # Get the objective expression (LinearExpression)
             obj_expr = model.objective.expression
             
-            # Get objective coefficients as a dict {Reaction: coefficient}
-            obj_dict = model.objective.get_linear_coefficients(model.reactions)
+            # Convert to dict keyed by reaction.id
+            obj_dict = {rxn.id: coeff for rxn, coeff in model.objective.get_linear_coefficients(model.reactions).items()}
             
             # Build objective coefficient vector
             obj = np.zeros(num_col)
             for i, rxn in enumerate(model.reactions):
-                if rxn in obj_dict:
-                    obj[i] = obj_dict[rxn]
-
+                if rxn.id in obj_dict:
+                    obj[i] = obj_dict[rxn.id]
 
             
             col_cost  = obj.astype(np.float64)
