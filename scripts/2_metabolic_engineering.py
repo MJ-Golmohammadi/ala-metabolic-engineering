@@ -50,18 +50,18 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
             # Number of constraints (rows) = number of metabolites
             num_row = len(model.metabolites)
             
-            # Objective coefficients: 1 for objective reaction, 0 otherwise
             # Get the objective expression (LinearExpression)
             obj_expr = model.objective.expression
             
-            # Extract the first reaction from the objective expression
-            objective_rxn = list(obj_expr.keys())[0]
+            # Get objective coefficients as a dict {Reaction: coefficient}
+            obj_dict = model.objective.get_linear_coefficients(model.reactions)
             
             # Build objective coefficient vector
             obj = np.zeros(num_col)
             for i, rxn in enumerate(model.reactions):
-                if rxn.id == objective_rxn.id:   # match by reaction id
-                    obj[i] = 1.0
+                if rxn in obj_dict:
+                    obj[i] = obj_dict[rxn]
+
 
             
             col_cost  = obj.astype(np.float64)
