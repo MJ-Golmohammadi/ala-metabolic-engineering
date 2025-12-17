@@ -15,6 +15,7 @@ from pathlib import Path
 import sys
 import os
 import logging
+import highspy
 logging.getLogger('optlang').setLevel(logging.WARNING)
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.stdout = open(os.devnull, 'w')
@@ -38,38 +39,60 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
         
         try:            
           
-            import highspy
+            
             
             # Load environment-specific model
             model = cobra.io.read_sbml_model(str(model_path))
             
-            # Get the optlang problem object from COBRApy
-            lp = model.problem
+            # Build a HighsModel object
+            hm = highspy.HighsModel()
             
-            # NOTE: 'lp' is an optlang object, not directly usable by HiGHS.
-            # You need to extract the constraint matrix (A), bounds, and objective vector (c).
-            # COBRApy does not provide a direct helper for HiGHS, so you must build them manually.
+            # Number of variables (columns) = number of reactions
+            num_col = len(model.reactions)
+            # Number of constraints (rows) = number of metabolites
+            num_row = len(model.metabolites)
             
-            # Example placeholders (you must implement extraction logic):
-            lp_matrix = ...      # Constraint matrix from stoichiometry (S)
-            lp_bounds = ...      # Variable bounds (lower/upper for each flux)
-            lp_objective = ...   # Objective coefficients (usually biomass reaction)
+            hm.lp.num_col = num_col
+            hm.lp.num_row = num_row
+            
+            # Objective coefficients: 1 for objective reaction, 0 otherwise
+            obj = np.zeros(num_col)
+            for i, rxn in enumerate(model.reactions):
+                if rxn == model.objective.expression.keys()[0]:
+                    obj[i] = 1.0
+            hm.lp.col_cost = obj.tolist()
+            
+            # Bounds for each flux
+            hm.lp.col_lower = [rxn.lower_bound for rxn in model.reactions]
+            hm.lp.col_upper = [rxn.upper_bound for rxn in model.reactions]
+            
+            # Row bounds: all metabolite balances = 0
+            hm.lp.row_lower = [0.0 for _ in model.metabolites]
+            hm.lp.row_upper = [0.0 for _ in model.metabolites]
+            
+            # Constraint matrix (stoichiometric matrix S in CSR format)
+            S = cobra.util.array.create_stoichiometric_matrix(model)
+            # Convert to CSR
+            csr = S.tocsr()
+            hm.lp.a_matrix.start = csr.indptr.tolist()
+            hm.lp.a_matrix.index = csr.indices.tolist()
+            hm.lp.a_matrix.value = csr.data.tolist()
             
             # Initialize HiGHS solver
             highs = highspy.Highs()
-            
-            # Set solver options (output_flag=True prints solver log)
             highs.setOptionValue("output_flag", True)
             
-            # Pass the LP model to HiGHS
-            # This requires the matrix, bounds, and objective in HiGHS format
-            highs.passModel(lp_matrix, lp_bounds, lp_objective)
+            # Pass the HighsModel object
+            highs.passModel(hm)
             
             # Run the solver
             highs.run()
             
-            # Get the solution (flux values, objective value, etc.)
+            # Get the solution
             solution = highs.getSolution()
+            print("Objective value:", solution.objective_value)
+            print("Fluxes:", solution.col_value)
+
             
             # Continue with environment-specific configuration
             environment_config = environments.get(env_name)
