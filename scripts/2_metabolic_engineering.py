@@ -36,11 +36,44 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
     for env_name, model_path in base_model_paths.items():
         print(f"\n🔧 Evaluating engineering scenarios in {env_name} environment...")
         
-        try:
+        try:            
+          
+            import highspy
+            
             # Load environment-specific model
             model = cobra.io.read_sbml_model(str(model_path))
-            model.solver = "highs"
+            
+            # Get the optlang problem object from COBRApy
+            lp = model.problem
+            
+            # NOTE: 'lp' is an optlang object, not directly usable by HiGHS.
+            # You need to extract the constraint matrix (A), bounds, and objective vector (c).
+            # COBRApy does not provide a direct helper for HiGHS, so you must build them manually.
+            
+            # Example placeholders (you must implement extraction logic):
+            lp_matrix = ...      # Constraint matrix from stoichiometry (S)
+            lp_bounds = ...      # Variable bounds (lower/upper for each flux)
+            lp_objective = ...   # Objective coefficients (usually biomass reaction)
+            
+            # Initialize HiGHS solver
+            highs = highspy.Highs()
+            
+            # Set solver options (output_flag=True prints solver log)
+            highs.setOptionValue("output_flag", True)
+            
+            # Pass the LP model to HiGHS
+            # This requires the matrix, bounds, and objective in HiGHS format
+            highs.passModel(lp_matrix, lp_bounds, lp_objective)
+            
+            # Run the solver
+            highs.run()
+            
+            # Get the solution (flux values, objective value, etc.)
+            solution = highs.getSolution()
+            
+            # Continue with environment-specific configuration
             environment_config = environments.get(env_name)
+
             
             if not environment_config:
                 print(f"⚠️ No environment config for {env_name}, skipping...")
