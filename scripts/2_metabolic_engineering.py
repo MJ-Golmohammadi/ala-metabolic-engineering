@@ -43,7 +43,13 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
             
             # Load environment-specific model
             model = cobra.io.read_sbml_model(str(model_path))
+          
+            # Number of variables (columns) = number of reactions
+            num_col = len(model.reactions)
             
+            # Number of constraints (rows) = number of metabolites
+            num_row = len(model.metabolites)
+
             # Create a HighsLp object
             lp = highspy.HighsLp()
             
