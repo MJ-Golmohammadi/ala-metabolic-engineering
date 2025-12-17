@@ -44,54 +44,43 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
             # Load environment-specific model
             model = cobra.io.read_sbml_model(str(model_path))
             
-            # Build a HighsModel object
+            # Create a HighsLp object
+            lp = highspy.HighsLp()
+            
+            # Define number of variables (columns) and constraints (rows)
+            lp.num_col = num_col
+            lp.num_row = num_row
+            
+            # Objective coefficients
+            lp.col_cost = obj.tolist()
+            
+            # Bounds for each variable
+            lp.col_lower = [rxn.lower_bound for rxn in model.reactions]
+            lp.col_upper = [rxn.upper_bound for rxn in model.reactions]
+            
+            # Row bounds (stoichiometric constraints = 0)
+            lp.row_lower = [0.0 for _ in model.metabolites]
+            lp.row_upper = [0.0 for _ in model.metabolites]
+            
+            # Constraint matrix (CSR format)
+            S = cobra.util.array.create_stoichiometric_matrix(model).tocsr()
+            lp.a_matrix.start = S.indptr.tolist()
+            lp.a_matrix.index = S.indices.tolist()
+            lp.a_matrix.value = S.data.tolist()
+            
+            # Wrap into HighsModel
             hm = highspy.HighsModel()
+            hm.lp = lp
             
-            # Number of variables (columns) = number of reactions
-            num_col = len(model.reactions)
-            # Number of constraints (rows) = number of metabolites
-            num_row = len(model.metabolites)
-            
-            hm.lp.num_col = num_col
-            hm.lp.num_row = num_row
-            
-            # Objective coefficients: 1 for objective reaction, 0 otherwise
-            obj = np.zeros(num_col)
-            for i, rxn in enumerate(model.reactions):
-                if rxn == model.objective.expression.keys()[0]:
-                    obj[i] = 1.0
-            hm.lp.col_cost = obj.tolist()
-            
-            # Bounds for each flux
-            hm.lp.col_lower = [rxn.lower_bound for rxn in model.reactions]
-            hm.lp.col_upper = [rxn.upper_bound for rxn in model.reactions]
-            
-            # Row bounds: all metabolite balances = 0
-            hm.lp.row_lower = [0.0 for _ in model.metabolites]
-            hm.lp.row_upper = [0.0 for _ in model.metabolites]
-            
-            # Constraint matrix (stoichiometric matrix S in CSR format)
-            S = cobra.util.array.create_stoichiometric_matrix(model)
-            # Convert to CSR
-            csr = S.tocsr()
-            hm.lp.a_matrix.start = csr.indptr.tolist()
-            hm.lp.a_matrix.index = csr.indices.tolist()
-            hm.lp.a_matrix.value = csr.data.tolist()
-            
-            # Initialize HiGHS solver
+            # Solve
             highs = highspy.Highs()
-            highs.setOptionValue("output_flag", True)
-            
-            # Pass the HighsModel object
             highs.passModel(hm)
-            
-            # Run the solver
             highs.run()
             
-            # Get the solution
             solution = highs.getSolution()
-            print("Objective value:", solution.objective_value)
+            print("Objective:", solution.objective_value)
             print("Fluxes:", solution.col_value)
+
 
             
             # Continue with environment-specific configuration
