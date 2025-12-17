@@ -39,7 +39,7 @@ def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Di
         try:
             # Load environment-specific model
             model = cobra.io.read_sbml_model(str(model_path))
-            model.solver = "glpk"
+            model.solver = "highs"
             environment_config = environments.get(env_name)
             
             if not environment_config:
