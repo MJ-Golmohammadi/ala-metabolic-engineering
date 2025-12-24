@@ -8,9 +8,9 @@ environments:
   
   # Glucose: C6H12O6 → 6 carbon atoms
   Glu:
-    EX_glc__D_e: [-10.0, 1000.0]     # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_glc__D_e: [-1.0, 1000.0]     # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
     EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
-    EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
+    EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake  
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
     EX_so4_e: [-2.0, 1000.0]        # Sulfate uptake
     EX_fe2_e: [-0.5, 1000.0]        # Iron uptake
@@ -18,20 +18,13 @@ environments:
     EX_k_e: [-0.5, 1000.0]          # Potassium uptake
     EX_ca2_e: [-0.2, 1000.0]        # Calcium uptake
     EX_cl_e: [-0.5, 1000.0]         # Chloride uptake
-    EX_na1_e: [-0.5, 1000.0]        # Sodium uptake
-    EX_mn2_e: [-0.05, 1000.0]       # Manganese (trace)
-    EX_zn2_e: [-0.05, 1000.0]       # Zinc (trace)
-    EX_cobalt2_e: [-0.05, 1000.0]   # Cobalt (trace)
-    EX_cu2_e: [-0.01, 1000.0]       # Copper (trace)
-    EX_ni2_e: [-0.01, 1000.0]       # Nickel (trace)
-    EX_mobd_e: [-0.01, 1000.0]      # Molybdate (trace)
     EX_co2_e: [0.0, 1000.0]         # CO2 secretion
     EX_h2o_e: [0.0, 1000.0]         # Water exchange
     EX_h_e: [-1000.0, 1000.0]       # Proton exchange
 
   # Citrate: C6H8O7 → 6 carbon atoms  
   Cit:
-    EX_cit_e: [-10.0, 1000.0]        # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_cit_e: [-1.0, 1000.0]        # 1.0 mmol/gDW/h = 6 mmol C/gDW/h
     EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
     EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
@@ -41,19 +34,13 @@ environments:
     EX_k_e: [-0.5, 1000.0]          # Potassium uptake
     EX_ca2_e: [-0.2, 1000.0]        # Calcium uptake
     EX_cl_e: [-0.5, 1000.0]         # Chloride uptake
-    EX_na1_e: [-0.5, 1000.0]        # Sodium uptake
-    EX_mn2_e: [-0.05, 1000.0]       # Manganese (trace)
-    EX_zn2_e: [-0.05, 1000.0]       # Zinc (trace)
-    EX_cobalt2_e: [-0.05, 1000.0]   # Cobalt (trace)
-    EX_cu2_e: [-0.01, 1000.0]       # Copper (trace)
-    EX_ni2_e: [-0.01, 1000.0]       # Nickel (trace)
-    EX_mobd_e: [-0.01, 1000.0]      # Molybdate (trace)
     EX_co2_e: [0.0, 1000.0]         # CO2 secretion
     EX_h2o_e: [0.0, 1000.0]         # Water exchange
     EX_h_e: [-1000.0, 1000.0]       # Proton exchange
+
   # Serine: C3H7NO3 → 3 carbon atoms
   Ser:
-    EX_ser__L_e: [-10.0, 1000.0]     # 2.0 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_ser__L_e: [-2.0, 1000.0]     # 2.0 mmol/gDW/h = 6 mmol C/gDW/h
     EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
     EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
@@ -63,20 +50,13 @@ environments:
     EX_k_e: [-0.5, 1000.0]          # Potassium uptake
     EX_ca2_e: [-0.2, 1000.0]        # Calcium uptake
     EX_cl_e: [-0.5, 1000.0]         # Chloride uptake
-    EX_na1_e: [-0.5, 1000.0]        # Sodium uptake
-    EX_mn2_e: [-0.05, 1000.0]       # Manganese (trace)
-    EX_zn2_e: [-0.05, 1000.0]       # Zinc (trace)
-    EX_cobalt2_e: [-0.05, 1000.0]   # Cobalt (trace)
-    EX_cu2_e: [-0.01, 1000.0]       # Copper (trace)
-    EX_ni2_e: [-0.01, 1000.0]       # Nickel (trace)
-    EX_mobd_e: [-0.01, 1000.0]      # Molybdate (trace)
     EX_co2_e: [0.0, 1000.0]         # CO2 secretion
     EX_h2o_e: [0.0, 1000.0]         # Water exchange
     EX_h_e: [-1000.0, 1000.0]       # Proton exchange
 
   # Ferulate: C10H10O4 → 10 carbon atoms
   Fer:
-    EX_fer_e: [-10, 1000.0]        # 0.6 mmol/gDW/h = 6 mmol C/gDW/h
+    EX_fer_e: [-0.6, 1000.0]        # 0.6 mmol/gDW/h = 6 mmol C/gDW/h
     EX_o2_e: [-20.0, 1000.0]        # Oxygen uptake
     EX_nh4_e: [-10.0, 1000.0]       # Ammonium uptake
     EX_pi_e: [-5.0, 1000.0]         # Phosphate uptake
@@ -86,13 +66,6 @@ environments:
     EX_k_e: [-0.5, 1000.0]          # Potassium uptake
     EX_ca2_e: [-0.2, 1000.0]        # Calcium uptake
     EX_cl_e: [-0.5, 1000.0]         # Chloride uptake
-    EX_na1_e: [-0.5, 1000.0]        # Sodium uptake
-    EX_mn2_e: [-0.05, 1000.0]       # Manganese (trace)
-    EX_zn2_e: [-0.05, 1000.0]       # Zinc (trace)
-    EX_cobalt2_e: [-0.05, 1000.0]   # Cobalt (trace)
-    EX_cu2_e: [-0.01, 1000.0]       # Copper (trace)
-    EX_ni2_e: [-0.01, 1000.0]       # Nickel (trace)
-    EX_mobd_e: [-0.01, 1000.0]      # Molybdate (trace)
     EX_co2_e: [0.0, 1000.0]         # CO2 secretion
     EX_h2o_e: [0.0, 1000.0]         # Water exchange
     EX_h_e: [-1000.0, 1000.0]       # Proton exchange
@@ -215,7 +188,6 @@ engineering_scenarios:
     GLUTRR: overexpress_5x    # hemA - Key bottleneck
     PPBNGS: knockdown_80      # hemB - Major consumer
     # Only 2 modifications for high impact/low complexity
-
 
 objectives:
   # Optimization objectives for multi-objective analysis
