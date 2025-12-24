@@ -1,46 +1,49 @@
+# models/model_utils.py
 """
-Enhanced Model Utilities for Multi-Environment Metabolic Engineering
-Q1 Journal Quality - Supports thermo-constrained models and multiple environments
+Model utilities: expression scaling, wild-secondary baseline locking,
+safe DM creation, and simulation helpers.
 
-This module provides utilities for:
-- creating engineered strains by applying genetic modifications relative to
-  wild-type flux baselines computed under one or more reference objectives,
-  with the option to lock a reaction flux to a target value (lb == ub),
-- simulating models under specified objectives and environments,
-- computing yield metrics and other helpers.
+Key features implemented:
+- read_expression_scaling: read CSV with expression columns (expression_Glu, _Cit, ...)
+  and compute per-reaction scaling factors relative to the minimum non-zero value
+  in the chosen environment (min -> factor 1.0).
+- apply_wild_secondary_fluxes: compute "secondary wild flux" = WT_flux * factor,
+  lock reaction bounds to that value (signed) as baseline for wild-type.
+- ensure_demand_for_metabolite: create DM reaction for a metabolite safely.
+- simulate_with_objective: returns (solution, min_growth_abs) and applies environment.
 
-Key change in this version:
-- When a modification requests a proportional change (e.g., 'knockdown_80' or
-  'overexpress_1.6x') the function will compute a WT baseline flux (max abs
-  across provided reference objectives) and then **lock** the reaction flux
-  to the requested target by setting both lower_bound and upper_bound to the
-  same value (signed according to WT direction). If the WT baseline is
-  essentially zero, a safe fallback based on current bounds is used.
+Create engineered strain with advanced mutation logic:
+- Uses wild_secondary baseline (already applied or provided)
+- Applies overexpression and knockdown according to 3/5 + 2/5 rule
+- Checks precursor sum to decide whether to enable the extra 2/5
+- Handles consumer reaction (e.g., PPBNGS / phd) with reversed logic
+- Provides safe fallback when WT flux ~ 0
 """
 
 import cobra
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import logging
 
 # Setup logging
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 
 def parse_modification_factor(change_type: str) -> float:
     """
-    Dynamically parse modification tag into a numeric factor.
+    Parse modification tag into numeric factor.
 
-    Supported formats:
+    Supported:
       'knockout' -> 0.0
-      'knockdown_<p>' -> keep (1 - p/100) of WT flux
-          e.g., 'knockdown_80' -> 0.2 (keep 20%)
-      'overexpress_<k>x' -> multiply WT flux by k
-          e.g., 'overexpress_1.6x' -> 1.6
-
-    Raises ValueError for unknown/invalid formats.
+      'knockdown_<p>' -> keep (1 - p/100) of WT flux (e.g., 'knockdown_80' -> 0.2)
+      'overexpress_<k>x' -> multiply WT flux by k (e.g., 'overexpress_1.6x' -> 1.6)
     """
     ct = (change_type or "").strip().lower()
     if ct == "knockout":
@@ -63,313 +66,505 @@ def parse_modification_factor(change_type: str) -> float:
     raise ValueError(f"Unknown modification type: {change_type}")
 
 
+
+def parse_mod_tag(tag: str):
+    """
+    Parse tags like 'overexpress_4x' or 'knockdown_40' or 'knockout'
+    Returns ('overexpress', factor) or ('knockdown', fraction) or ('knockout', 0.0)
+    """
+    t = (tag or "").strip().lower()
+    if t == "knockout":
+        return ("knockout", 0.0)
+    if t.startswith("knockdown_"):
+        try:
+            perc = float(t.split("_", 1)[1])
+            return ("knockdown", 1.0 - perc / 100.0)
+        except Exception:
+            raise ValueError(f"Invalid knockdown tag: {tag}")
+    if t.startswith("overexpress_"):
+        try:
+            val = t.split("_", 1)[1]
+            if val.endswith("x"):
+                val = val[:-1]
+            return ("overexpress", float(val))
+        except Exception:
+            raise ValueError(f"Invalid overexpress tag: {tag}")
+    raise ValueError(f"Unknown modification tag: {tag}")
+
+
+
+def ensure_demand_for_product(model: cobra.Model, reaction_id: str, dm_prefix: str = "DM") -> str:
+    """
+    Ensure a demand reaction exists for a product of `reaction_id`.
+    Strategy:
+      - Find product metabolite(s) of the reaction (stoichiometry > 0).
+      - Prefer metabolite in cytosol (compartment 'c') if available.
+      - Create a demand reaction named f"{dm_prefix}_{reaction_id}_c" consuming that metabolite (stoich -1).
+      - Return the demand reaction id.
+
+    Returns:
+      demand_rxn_id (str)
+    """
+    if reaction_id not in model.reactions:
+        raise KeyError(f"Reaction {reaction_id} not found in model")
+
+    rxn = model.reactions.get_by_id(reaction_id)
+
+    # Find product metabolites (positive stoichiometry in reaction object)
+    product_mets = []
+    for met, coeff in rxn.metabolites.items():
+        # In cobra Reaction, stoichiometry is negative for reactants, positive for products
+        try:
+            stoich = rxn.get_coefficient(met)
+        except Exception:
+            # fallback: use metabolites dict value
+            stoich = rxn.metabolites.get(met, 0.0)
+        if stoich > 0:
+            product_mets.append(met)
+
+    # If none found, fallback to any metabolite
+    if not product_mets:
+        product_mets = list(rxn.metabolites.keys())
+
+    # Prefer cytosolic metabolite
+    chosen = None
+    for m in product_mets:
+        if hasattr(m, "compartment") and m.compartment == "c":
+            chosen = m
+            break
+    if chosen is None and product_mets:
+        chosen = product_mets[0]
+
+    if chosen is None:
+        # As a last resort, create a generic metabolite
+        met_id = f"{reaction_id}_product_c"
+        if met_id not in model.metabolites:
+            m = cobra.Metabolite(met_id, name=f"{reaction_id}_product", compartment="c")
+            model.add_metabolites([m])
+            chosen = m
+        else:
+            chosen = model.metabolites.get_by_id(met_id)
+
+    # Build demand reaction id
+    dm_id = f"{dm_prefix}_{reaction_id}_c"
+    # Ensure uniqueness
+    if dm_id in model.reactions:
+        return dm_id
+
+    # Create demand reaction consuming the chosen metabolite (i.e., export)
+    dm_rxn = cobra.Reaction(dm_id)
+    dm_rxn.name = f"Demand for {chosen.id}"
+    dm_rxn.lower_bound = 0.0
+    dm_rxn.upper_bound = 1000.0
+    dm_rxn.add_metabolites({chosen: -1.0})  # consume product -> export/demand
+    model.add_reactions([dm_rxn])
+    logger.info(f"Created demand reaction {dm_id} for metabolite {chosen.id}")
+    return dm_id
+
+
+
+def read_expression_scaling(csv_path: str, environment: str, expr_col_prefix: str = "expression_") -> pd.DataFrame:
+    """
+    Read CSV that contains columns:
+      reaction_id, expression_Glu, expression_Cit, expression_Ser, expression_Fer, ...
+    Compute scaling factor per reaction for the requested environment:
+      - find min positive value in that environment column -> baseline = 1.0
+      - factor = value / min_value
+    Returns DataFrame with columns: reaction_id, expr_value, factor
+    """
+    df = pd.read_csv(csv_path)
+    env_col = f"{expr_col_prefix}{environment}"
+    if env_col not in df.columns:
+        raise KeyError(f"Expression column {env_col} not found in {csv_path}")
+
+    # Replace zeros/negatives with NaN for min calculation (we treat them as missing)
+    vals = df[env_col].replace({0: pd.NA}).dropna().astype(float)
+    if vals.empty:
+        raise ValueError(f"No positive expression values found in column {env_col}")
+
+    min_val = float(vals.min())
+    if min_val <= 0:
+        raise ValueError("Minimum expression value must be positive")
+
+    # compute factor
+    df = df.copy()
+    df["expr_value"] = pd.to_numeric(df[env_col], errors="coerce").fillna(0.0)
+    # For zero or missing, set factor = 0 (no capacity)
+    df["factor"] = df["expr_value"].apply(lambda v: float(v / min_val) if v > 0 else 0.0)
+    return df[["reaction_id", "expr_value", "factor"]]
+
+
+def ensure_demand_for_metabolite(model: cobra.Model, metabolite_id: str, dm_prefix: str = "DM") -> str:
+    """
+    Ensure a demand reaction exists for a metabolite id (metabolite_id).
+    If metabolite not present, raise KeyError.
+    Returns demand reaction id.
+    """
+    if metabolite_id not in model.metabolites:
+        raise KeyError(f"Metabolite {metabolite_id} not found in model")
+
+    met = model.metabolites.get_by_id(metabolite_id)
+    dm_id = f"{dm_prefix}_{met.id}"
+    if dm_id in model.reactions:
+        return dm_id
+
+    dm = cobra.Reaction(dm_id)
+    dm.name = f"Demand for {met.id}"
+    dm.lower_bound = 0.0
+    dm.upper_bound = 1000.0
+    dm.add_metabolites({met: -1.0})
+    model.add_reactions([dm])
+    logger.info(f"Created demand reaction {dm_id} for metabolite {met.id}")
+    return dm_id
+
+
+def apply_wild_secondary_fluxes(model: cobra.Model, reaction_factors: Dict[str, float],
+                                objective_rxn: str = "BIOMASS_KT2440_WT3",
+                                substrate_map: Optional[Dict] = None) -> Dict[str, Tuple[float, float]]:
+    """
+    Compute WT fluxes under the model's current environment (model should already
+    have environment bounds applied). For each reaction in reaction_factors:
+      - read WT flux (signed)
+      - compute wild_secondary = WT_flux * factor
+      - lock reaction bounds to (wild_secondary, wild_secondary) (signed)
+    Returns a mapping reaction_id -> (wt_flux, wild_secondary)
+    Notes:
+      - If factor == 0 -> do not lock (leave bounds unchanged)
+      - This function works on a copy of model internally to compute WT fluxes,
+        but applies locks on the provided model (so caller should pass a copy if needed).
+    """
+    results = {}
+    # compute WT fluxes on a copy to avoid side-effects
+    tmp = model.copy()
+    try:
+        if objective_rxn in tmp.reactions:
+            tmp.objective = tmp.reactions.get_by_id(objective_rxn)
+        else:
+            tmp.objective = objective_rxn
+    except Exception:
+        tmp.objective = objective_rxn
+
+    sol = tmp.optimize()
+    if sol.status != "optimal":
+        logger.warning("WT optimization not optimal when computing wild_secondary fluxes; proceeding with available fluxes")
+
+    for rxn_id, factor in reaction_factors.items():
+        if rxn_id not in model.reactions:
+            logger.debug(f"Reaction {rxn_id} not in model; skipping wild_secondary")
+            continue
+        wt_flux = float(sol.fluxes.get(rxn_id, 0.0))
+        wild_secondary = wt_flux * float(factor)
+        # If factor is zero, skip locking (treat as no capacity)
+        if factor <= 0:
+            logger.debug(f"Factor for {rxn_id} is zero; skipping lock")
+            results[rxn_id] = (wt_flux, 0.0)
+            continue
+
+        # Apply lock on the provided model (signed)
+        rxn = model.reactions.get_by_id(rxn_id)
+        prev_bounds = (rxn.lower_bound, rxn.upper_bound)
+        # Lock to signed wild_secondary
+        rxn.lower_bound = wild_secondary
+        rxn.upper_bound = wild_secondary
+        logger.info(f"Locked {rxn_id} to wild_secondary {wild_secondary:.6g} (was {prev_bounds})")
+        results[rxn_id] = (wt_flux, wild_secondary)
+    return results
+
+
+def simulate_with_objective(model: cobra.Model, objective: str, environment: Dict,
+                            min_growth_fraction: float = 0.01, biomass_id: str = "BIOMASS_KT2440_WT3") -> Tuple[cobra.Solution, float]:
+    """
+    Simulate model under environment and objective. For ALA objective (G1SAT),
+    compute WT biomass and apply epsilon constraint (min_growth_fraction * WT).
+    Returns (solution, min_growth_abs).
+    """
+    with model:
+        # apply environment bounds
+        for rxn_id, bounds in (environment or {}).items():
+            if rxn_id in model.reactions:
+                lb, ub = bounds
+                model.reactions.get_by_id(rxn_id).lower_bound = lb
+                model.reactions.get_by_id(rxn_id).upper_bound = ub
+
+        if objective in ["max_biomass", biomass_id]:
+            model.objective = model.reactions.get_by_id(biomass_id)
+            sol = model.optimize()
+            return sol, 0.0
+
+        if objective in ["max_ala", "G1SAT"]:
+            # compute WT biomass on a copy
+            tmp = model.copy()
+            tmp.objective = tmp.reactions.get_by_id(biomass_id)
+            sol_ref = tmp.optimize()
+            ref_growth = float(sol_ref.fluxes.get(biomass_id, 0.0)) if sol_ref.status == "optimal" else 0.0
+            min_growth_abs = ref_growth * min_growth_fraction if ref_growth > 0 else 0.0
+
+            # enforce on working model
+            prev_lb = model.reactions.get_by_id(biomass_id).lower_bound
+            model.reactions.get_by_id(biomass_id).lower_bound = max(prev_lb, min_growth_abs)
+
+            model.objective = model.reactions.get_by_id("G1SAT")
+            sol = model.optimize()
+
+            # restore
+            model.reactions.get_by_id(biomass_id).lower_bound = prev_lb
+            return sol, min_growth_abs
+
+        # other objectives
+        if objective in model.reactions:
+            model.objective = model.reactions.get_by_id(objective)
+        else:
+            model.objective = objective
+        sol = model.optimize()
+        return sol, 0.0
+
+
 def create_engineered_strain(
     base_model: cobra.Model,
-    modifications: Dict,
-    reference_objectives: List[str] = None,
-    environment: Dict = None,
-    objective_to_rxn: Dict[str, str] = None,
-    cap_value: float = 6000.0,
+    modifications: Dict[str, str],
+    wild_secondary_map: Optional[Dict[str, float]] = None,
+    precursor_map: Optional[Dict[str, List[str]]] = None,
+    consumer_map: Optional[Dict[str, str]] = None,
     lock_on_modify: bool = True,
-    small_eps: float = 1e-9
+    cap_factor: float = 10.0
 ) -> cobra.Model:
     """
-    Create an engineered metabolic model applying modifications relative to
-    wild-type fluxes computed under one or more reference objectives.
+    Apply modifications to base_model using the following rules:
 
-    Behavior (concise)
-    ------------------
-    - For each reaction in `modifications`, compute a WT baseline flux as the
-      maximum absolute flux observed across the provided reference objectives
-      (e.g., 'max_biomass', 'max_ala') under the given environment.
-    - For proportional modifications (knockdown/overexpress), compute a target
-      flux = abs(WT_flux) * factor.
-    - If `lock_on_modify` is True, set both lower_bound and upper_bound to the
-      signed target (i.e., lb == ub == target) so the reaction flux is locked
-      to the engineered value in subsequent optimizations.
-    - If WT flux is essentially zero, fall back to scaling current bounds to
-      derive a target; if bounds are also degenerate, log a warning and skip.
-    - Knockouts set bounds to (0, 0).
-    - The function applies `environment` when computing WT baselines.
-    - `objective_to_rxn` maps objective names to reaction IDs (defaults provided).
-
-    Parameters
-    ----------
-    base_model : cobra.Model
-        The wild-type model to copy and modify.
-    modifications : Dict
-        Mapping reaction_id -> modification tag (e.g., {'PPBNGS': 'knockdown_80'}).
-    reference_objectives : List[str], optional
-        List of objective names to use as WT references. Defaults to
-        ['max_biomass', 'max_ala'].
-    environment : Dict, optional
-        Environment bounds to apply when computing WT fluxes.
-    objective_to_rxn : Dict[str,str], optional
-        Mapping from objective name to reaction id. Defaults provided.
-    cap_value : float, optional
-        Safety cap for any bound set by this function.
-    lock_on_modify : bool, optional
-        If True, lock reaction fluxes to the computed target (lb == ub).
-        If False, only set upper_bound (for knockdown) or increase upper_bound
-        (for overexpression) without locking.
-    small_eps : float, optional
-        Threshold below which a WT flux is considered effectively zero.
-
-    Returns
-    -------
-    cobra.Model
-        A copy of base_model with modifications applied.
+    - wild_secondary_map: reaction_id -> wild_secondary_flux (signed) computed earlier.
+      If None, function will attempt to compute WT fluxes itself (not recommended).
+    - precursor_map: mapping reaction_id -> list of precursor reaction_ids (A,B,C -> D)
+    - consumer_map: mapping product reaction_id -> consumer reaction_id (e.g., G1SAT -> PPBNGS)
+    - For overexpression kx:
+        base_add = (3/5) * k * wild_secondary
+        extra_possible = (2/5) * k * wild_secondary
+        extra is added only if sum_of_precursor_increases >= 5 * baseline (see below)
+    - For knockdown:
+        reduce proportionally; knockouts set bounds to zero.
+    - For consumer reactions (hemB/PPBNGS), the 2/5 effect is reversed:
+        knockdown of consumer increases producer by (2/5 * knockdown_fraction)
     """
 
-    # Default mapping from objective name to reaction id
-    if objective_to_rxn is None:
-        objective_to_rxn = {
-            'max_biomass': 'BIOMASS_KT2440_WT3',
-            'max_ala': 'G1SAT'
-        }
-
-    if reference_objectives is None:
-        reference_objectives = ['max_biomass', 'max_ala']
-
-    # Work on a copy to avoid mutating the original model
     engineered = base_model.copy()
 
-    # Helper: apply environment bounds to a model (non-destructive)
-    def _apply_environment(m: cobra.Model, env: Dict):
-        if not env:
-            return
-        for rxn_id, bounds in env.items():
-            if rxn_id in m.reactions:
-                try:
-                    m.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
-                except Exception:
-                    # ignore individual failures; caller can inspect logs if needed
-                    logger.debug(f"Could not set environment bound for {rxn_id}")
+    # Ensure maps exist
+    wild_secondary_map = wild_secondary_map or {}
+    precursor_map = precursor_map or {}
+    consumer_map = consumer_map or {}
 
-    # Build set of reactions to check
-    reactions_to_check = set(modifications.keys())
+    # Helper to safely set bounds (signed)
+    def set_bounds_signed(rxn, signed_value, lock=True):
+        prev = (rxn.lower_bound, rxn.upper_bound)
+        if lock:
+            rxn.lower_bound = signed_value
+            rxn.upper_bound = signed_value
+        else:
+            # conservative: expand ub or lb to include signed_value
+            if signed_value >= 0:
+                rxn.upper_bound = max(rxn.upper_bound, signed_value)
+            else:
+                rxn.lower_bound = min(rxn.lower_bound, signed_value)
+        logger.info(f"Set bounds for {rxn.id}: {prev} -> ({rxn.lower_bound}, {rxn.upper_bound})")
 
-    # Compute WT flux baseline for each reaction across reference objectives
-    wt_flux_baseline: Dict[str, float] = {r: 0.0 for r in reactions_to_check}
+    # Precompute precursor aggregated multipliers for all target reactions
+    # We'll compute the "precursor_increase_factor" as sum of (3/5 * k * wild_secondary_precursor) / (wild_secondary_precursor)
+    # which simplifies to sum(3/5 * k) across precursors with non-zero wild_secondary.
+    # But we need to consider knockdowns (negative effect).
+    # We'll first parse all modifications to know k or knockdown fractions.
+    parsed_mods = {}
+    for rxn_id, tag in modifications.items():
+        parsed_mods[rxn_id] = parse_mod_tag(tag)
 
-    for ref_obj in reference_objectives:
-        ref_rxn_id = objective_to_rxn.get(ref_obj)
-        if ref_rxn_id is None or ref_rxn_id not in base_model.reactions:
-            logger.debug(f"Reference objective {ref_obj} not found in model; skipping")
-            continue
-
-        tmp = base_model.copy()
-        _apply_environment(tmp, environment)
-
-        # Set objective
+    # Apply modifications
+    for rxn_id, tag in modifications.items():
         try:
-            tmp.objective = tmp.reactions.get_by_id(ref_rxn_id)
-        except Exception:
-            tmp.objective = ref_rxn_id
-
-        try:
-            sol = tmp.optimize()
-            if sol.status != 'optimal':
-                logger.debug(f"WT solve for {ref_obj} not optimal (status={sol.status}); skipping")
-                continue
-        except Exception as e:
-            logger.warning(f"WT optimization for {ref_obj} failed: {e}")
-            continue
-
-        # Record fluxes
-        for rxn_id in reactions_to_check:
-            flux_val = float(sol.fluxes.get(rxn_id, 0.0))
-            prev = wt_flux_baseline.get(rxn_id, 0.0)
-            if abs(flux_val) > abs(prev):
-                wt_flux_baseline[rxn_id] = flux_val
-
-    # Apply modifications using computed baselines (dynamic factors)
-    for rxn_id, change_type in modifications.items():
-        # Parse dynamic factor from tag
-        try:
-            factor = parse_modification_factor(change_type)
-        except ValueError as e:
-            logger.warning(f"{e} - skipping {rxn_id}")
-            continue
-
-        # Access reaction in engineered model
-        try:
-            rxn = engineered.reactions.get_by_id(rxn_id)
+            mod_type, mod_val = parsed_mods[rxn_id]
         except KeyError:
-            logger.warning(f"Reaction {rxn_id} not found in engineered model - skipping")
+            mod_type, mod_val = parse_mod_tag(tag)
+
+        if rxn_id not in engineered.reactions:
+            logger.warning(f"Reaction {rxn_id} not in model; skipping modification {tag}")
             continue
 
-        # Knockout handling
-        if factor == 0.0:
-            prev_bounds = (rxn.lower_bound, rxn.upper_bound)
+        rxn = engineered.reactions.get_by_id(rxn_id)
+        wt_secondary = float(wild_secondary_map.get(rxn_id, 0.0))
+
+        # Knockout
+        if mod_type == "knockout":
+            prev = (rxn.lower_bound, rxn.upper_bound)
             rxn.bounds = (0.0, 0.0)
-            logger.info(f"Knocked out {rxn_id}: bounds {prev_bounds} -> (0.0, 0.0)")
+            logger.info(f"Knockout applied to {rxn_id}: {prev} -> (0.0, 0.0)")
             continue
 
-        # Get WT baseline flux (signed)
-        wt_flux = float(wt_flux_baseline.get(rxn_id, 0.0))
-        prev_lower = rxn.lower_bound
-        prev_upper = rxn.upper_bound
+        # Overexpression
+        if mod_type == "overexpress":
+            k = float(mod_val)
+            # cap k to maximum allowed
+            k = min(k, cap_factor)
 
-        # If WT flux is essentially zero, fallback to scaling current bounds
-        if abs(wt_flux) <= small_eps:
-            logger.info(f"WT flux for {rxn_id} is ~0. Using fallback scaling of current bounds.")
-            # Fallback logic for both knockdown and overexpression
-            if "knockdown" in change_type:
-                # scale current bounds toward zero
-                if prev_upper > 0:
-                    new_ub = max(min(prev_upper * factor, cap_value), 0.0)
-                else:
-                    new_ub = prev_upper
-                if prev_lower < 0:
-                    new_lb = min(max(prev_lower * factor, -cap_value), 0.0)
-                else:
-                    new_lb = prev_lower
+            # base 3/5 portion
+            base_multiplier = (3.0 / 5.0) * k
+            base_target = wt_secondary * base_multiplier
 
-                if lock_on_modify:
-                    # Choose a target based on dominant bound direction
-                    target = new_ub if abs(new_ub) >= abs(new_lb) else new_lb
-                    # Ensure target is within cap
-                    target = max(min(target, cap_value), -cap_value)
-                    rxn.lower_bound = target
-                    rxn.upper_bound = target
-                    logger.info(f"Locked {rxn_id} to fallback target {target:.6f} (bounds {prev_lower}->{rxn.lower_bound}, {prev_upper}->{rxn.upper_bound})")
-                else:
-                    rxn.lower_bound = new_lb
-                    rxn.upper_bound = new_ub
-                    logger.info(f"Scaled bounds for {rxn_id}: ({prev_lower:.6f}, {prev_upper:.6f}) -> ({rxn.lower_bound:.6f}, {rxn.upper_bound:.6f})")
+            # compute precursor support for extra 2/5
+            extra_multiplier = (2.0 / 5.0) * k
+            extra_target = wt_secondary * extra_multiplier
 
+            # default extra_fraction_applied = 0.0
+            extra_fraction_applied = 0.0
+
+            # If there are precursors defined for this reaction, evaluate their net change
+            precursors = precursor_map.get(rxn_id, [])
+            if precursors:
+                # compute sum of precursor increases in terms of multiplier relative to their wild_secondary
+                sum_precursor_support = 0.0
+                sum_precursor_knockdown_effect = 0.0
+                for p in precursors:
+                    p_wt = float(wild_secondary_map.get(p, 0.0))
+                    p_mod = parsed_mods.get(p, (None, None))
+                    if p_mod[0] == "overexpress":
+                        p_k = min(float(p_mod[1]), cap_factor)
+                        # each precursor contributes (3/5 * p_k) toward support
+                        sum_precursor_support += (3.0 / 5.0) * p_k
+                    elif p_mod[0] == "knockdown":
+                        # knockdown reduces support; compute fraction reduced (1 - fraction)
+                        kd_frac = 1.0 - float(p_mod[1])  # e.g., knockdown_40 -> 0.4 reduction
+                        sum_precursor_knockdown_effect += kd_frac
+                    elif p_mod[0] == "knockout":
+                        sum_precursor_knockdown_effect += 1.0
+
+                # Decide how much of extra_target can be applied:
+                # If sum_precursor_support >= 5.0 (i.e., >= 5x), then full extra applies.
+                # Otherwise apply proportionally: fraction = sum_precursor_support / 5.0 (clamped 0..1)
+                # Also subtract knockdown effects (they reduce the extra fraction)
+                support_fraction = min(max((sum_precursor_support - sum_precursor_knockdown_effect) / 5.0, 0.0), 1.0)
+                extra_fraction_applied = support_fraction
             else:
-                # overexpression fallback: increase current capacity
-                if prev_upper > 0:
-                    candidate = min(prev_upper * factor, cap_value)
-                    signed_candidate = candidate
-                elif prev_lower < 0:
-                    candidate = min(abs(prev_lower) * factor, cap_value)
-                    signed_candidate = -candidate
-                else:
-                    signed_candidate = 0.0
+                # No precursors defined: conservative behavior -> do not apply extra 2/5
+                extra_fraction_applied = 0.0
 
+            # final target = base_target + extra_fraction_applied * extra_target
+            final_target = base_target + extra_fraction_applied * extra_target
+
+            # If wild_secondary is zero (no baseline), fallback: expand ub to cap * k
+            if abs(wt_secondary) < 1e-9:
+                # fallback: set ub to a reasonable capacity (cap_factor * k)
+                fallback_capacity = cap_factor * k
                 if lock_on_modify:
-                    rxn.lower_bound = signed_candidate
-                    rxn.upper_bound = signed_candidate
-                    logger.info(f"Locked {rxn_id} to fallback overexpression target {signed_candidate:.6f}")
+                    set_bounds_signed(rxn, fallback_capacity, lock=True)
                 else:
-                    if prev_upper > 0:
-                        rxn.upper_bound = candidate
-                    if prev_lower < 0:
-                        rxn.lower_bound = -candidate
-                    logger.info(f"Expanded bounds for {rxn_id}: ({prev_lower:.6f}, {prev_upper:.6f}) -> ({rxn.lower_bound:.6f}, {rxn.upper_bound:.6f})")
-            continue
+                    if rxn.upper_bound < fallback_capacity:
+                        rxn.upper_bound = fallback_capacity
+                    logger.info(f"Fallback overexpression for {rxn_id}: set ub to {fallback_capacity}")
+                continue
 
-        # Compute unsigned target flux based on WT baseline and factor
-        unsigned_target = min(abs(wt_flux) * factor, cap_value)
-        # Determine signed target according to WT direction
-        signed_target = unsigned_target if wt_flux >= 0 else -unsigned_target
-
-        if "knockdown" in change_type:
-            # Reduce flux to fraction of WT and lock if requested
+            # Apply signed final target according to sign of wt_secondary
+            signed_final = final_target if wt_secondary >= 0 else -final_target
             if lock_on_modify:
-                rxn.lower_bound = signed_target
-                rxn.upper_bound = signed_target
-                logger.info(f"Locked knockdown {rxn_id}: WT_flux={wt_flux:.6f}, factor={factor:.3f}, bounds -> ({signed_target:.6f}, {signed_target:.6f})")
+                set_bounds_signed(rxn, signed_final, lock=True)
             else:
-                # safer non-locked constraint
-                if wt_flux >= 0:
-                    rxn.upper_bound = signed_target
+                set_bounds_signed(rxn, signed_final, lock=False)
+
+            logger.info(f"Overexpression applied to {rxn_id}: k={k}, base={base_target:.6g}, extra_frac={extra_fraction_applied:.3f}, final={signed_final:.6g}")
+            continue
+
+        # Knockdown (non-zero factor < 1)
+        if mod_type == "knockdown":
+            fraction = float(mod_val)  # e.g., 0.6 for knockdown_40
+            # target = wt_secondary * fraction
+            target = wt_secondary * fraction
+            if abs(wt_secondary) < 1e-9:
+                # fallback: scale current bounds toward zero
+                prev = (rxn.lower_bound, rxn.upper_bound)
+                rxn.lower_bound = rxn.lower_bound * fraction
+                rxn.upper_bound = rxn.upper_bound * fraction
+                logger.info(f"Fallback knockdown for {rxn_id}: {prev} -> ({rxn.lower_bound}, {rxn.upper_bound})")
+                continue
+
+            signed_target = target if wt_secondary >= 0 else -abs(target)
+            if lock_on_modify:
+                set_bounds_signed(rxn, signed_target, lock=True)
+            else:
+                # conservative: set ub or lb accordingly
+                if wt_secondary >= 0:
+                    rxn.upper_bound = min(rxn.upper_bound, signed_target)
                     if rxn.lower_bound > rxn.upper_bound:
                         rxn.lower_bound = min(0.0, rxn.upper_bound)
                 else:
-                    rxn.lower_bound = signed_target
+                    rxn.lower_bound = max(rxn.lower_bound, signed_target)
                     if rxn.upper_bound < rxn.lower_bound:
                         rxn.upper_bound = max(0.0, rxn.lower_bound)
-                logger.info(f"Applied knockdown (non-locked) to {rxn_id}: bounds -> ({rxn.lower_bound:.6f}, {rxn.upper_bound:.6f})")
+                logger.info(f"Knockdown applied to {rxn_id}: target {signed_target:.6g}")
 
-        else:
-            # Overexpression: increase capacity relative to WT and lock if requested
-            if lock_on_modify:
-                rxn.lower_bound = signed_target
-                rxn.upper_bound = signed_target
-                logger.info(f"Locked overexpression {rxn_id}: WT_flux={wt_flux:.6f}, factor={factor:.3f}, bounds -> ({signed_target:.6f}, {signed_target:.6f})")
+            continue
+
+    # After applying modifications, handle consumer-producer interactions:
+    # For each producer that has a consumer in consumer_map, ensure that:
+    #   - the amount consumed by consumer is honored
+    #   - any excess production beyond consumption is exported via DM for that product metabolite
+    for producer, consumer in consumer_map.items():
+        if producer not in engineered.reactions:
+            continue
+        if consumer not in engineered.reactions:
+            continue
+
+        prod_rxn = engineered.reactions.get_by_id(producer)
+        cons_rxn = engineered.reactions.get_by_id(consumer)
+
+        # compute current fluxes (optimize quickly to get fluxes)
+        with engineered:
+            try:
+                engineered.objective = prod_rxn
+            except Exception:
+                engineered.objective = producer
+            sol = engineered.optimize()
+            if sol.status != "optimal":
+                logger.debug(f"Could not get fluxes to balance producer {producer} and consumer {consumer}")
+                continue
+            prod_flux = float(sol.fluxes.get(producer, 0.0))
+            cons_flux = float(sol.fluxes.get(consumer, 0.0))
+
+        # If producer produces more than consumer consumes, create DM on product metabolite
+        # Identify product metabolite of producer (prefer cytosolic)
+        prod_rxn_obj = prod_rxn
+        product_met = None
+        for m, coeff in prod_rxn_obj.metabolites.items():
+            try:
+                sto = prod_rxn_obj.get_coefficient(m)
+            except Exception:
+                sto = prod_rxn_obj.metabolites.get(m, 0.0)
+            if sto > 0:
+                if hasattr(m, "compartment") and m.compartment == "c":
+                    product_met = m
+                    break
+                if product_met is None:
+                    product_met = m
+
+        if product_met is None:
+            logger.debug(f"No product metabolite found for {producer}; skipping DM creation")
+            continue
+
+        # compute excess = max(0, prod_flux - cons_flux)
+        excess = max(0.0, prod_flux - cons_flux)
+        if excess > 1e-9:
+            # create DM for this metabolite and set its lower bound to 0 and ub large
+            dm_id = f"DM_{product_met.id}"
+            if dm_id not in engineered.reactions:
+                dm_rxn = cobra.Reaction(dm_id)
+                dm_rxn.name = f"Demand for {product_met.id}"
+                dm_rxn.lower_bound = 0.0
+                dm_rxn.upper_bound = 1000.0
+                dm_rxn.add_metabolites({product_met: -1.0})
+                engineered.add_reactions([dm_rxn])
+                logger.info(f"Created DM {dm_id} to export excess {product_met.id} = {excess:.6g}")
             else:
-                # Conservative expansion (non-locked)
-                if prev_upper < unsigned_target:
-                    rxn.upper_bound = unsigned_target
-                if prev_lower > -unsigned_target and prev_lower < 0:
-                    rxn.lower_bound = -unsigned_target
-                logger.info(f"Applied overexpression (non-locked) to {rxn_id}: bounds -> ({rxn.lower_bound:.6f}, {rxn.upper_bound:.6f})")
+                logger.info(f"DM {dm_id} already exists; excess {excess:.6g} will be exported through it")
 
     return engineered
 
 
-def simulate_with_objective(model: cobra.Model, objective: str, environment: Dict) -> cobra.Solution:
-    """
-    Simulate the model under a given objective and environment constraints.
-
-    Behavior:
-    - Always apply environment constraints from YAML (carbon source uptake, etc.).
-    - When objective is biomass, simply optimize for growth.
-    - When objective is ALA (G1SAT), first compute the biomass optimum,
-      cap biomass upper bound to that optimum, then re-apply environment
-      constraints to ensure substrate uptake is correct, and finally optimize
-      for ALA production.
-    """
-
-    with model:
-        # Get biomass reaction and set permissive bounds initially
-        biomass_rxn = model.reactions.get_by_id('BIOMASS_KT2440_WT3')
-        biomass_rxn.lower_bound = 0
-        biomass_rxn.upper_bound = 6000.0  # Allow growth up to a large cap
-
-        # Step 1: Apply environment constraints from YAML
-        for rxn_id, bounds in (environment or {}).items():
-            if rxn_id in model.reactions:
-                try:
-                    model.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
-                except Exception as e:
-                    logger.warning(f"Could not set bounds for {rxn_id}: {e}")
-
-        # Step 2: Special handling if objective is ALA production
-        if objective == 'G1SAT':
-            # Compute biomass optimum first
-            model.objective = biomass_rxn
-            sol_biomass = model.optimize()
-            biomass_opt = sol_biomass.objective_value if sol_biomass.status == 'optimal' else 1.0
-
-            # Cap biomass upper bound to realistic maximum
-            biomass_rxn.upper_bound = biomass_opt
-
-            # Re-apply environment constraints after biomass optimization
-            for rxn_id, bounds in (environment or {}).items():
-                if rxn_id in model.reactions:
-                    try:
-                        model.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
-                    except Exception as e:
-                        logger.warning(f"Could not re-set bounds for {rxn_id}: {e}")
-
-        # Step 3: Set the desired objective (biomass or ALA)
-        try:
-            if isinstance(objective, str) and objective in model.reactions:
-                model.objective = model.reactions.get_by_id(objective)
-            else:
-                model.objective = objective
-        except Exception as e:
-            logger.error(f"Error setting objective {objective}: {e}")
-            return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
-
-        # Step 4: Perform flux balance analysis
-        try:
-            solution = model.optimize()
-            return solution
-        except Exception as e:
-            logger.error(f"Optimization failed: {e}")
-            return cobra.Solution(objective_value=0, status='error', fluxes=pd.Series())
-
 
 def get_substrate_rxn_for_environment(environment: str) -> str:
-    """
-    Get the appropriate substrate exchange reaction for each environment
-    """
     substrate_map = {
         'Glu': 'EX_glc__D_e',
         'Cit': 'EX_cit_e',
@@ -380,99 +575,108 @@ def get_substrate_rxn_for_environment(environment: str) -> str:
 
 
 def get_substrate_properties(environment: str) -> Dict:
-    """
-    Get molecular weight and carbon content for each substrate
-    """
     substrate_properties = {
-        'Glu': {'mw': 180.16, 'carbon_atoms': 6},   # Glucose: C6H12O6
-        'Cit': {'mw': 192.12, 'carbon_atoms': 6},   # Citrate: C6H8O7
-        'Ser': {'mw': 105.09, 'carbon_atoms': 3},   # Serine: C3H7NO3
-        'Fer': {'mw': 194.19, 'carbon_atoms': 10}   # Ferulate: C10H10O4
+        'Glu': {'mw': 180.16, 'carbon_atoms': 6},
+        'Cit': {'mw': 192.12, 'carbon_atoms': 6},
+        'Ser': {'mw': 105.09, 'carbon_atoms': 3},
+        'Fer': {'mw': 194.19, 'carbon_atoms': 10}
     }
     return substrate_properties.get(environment, {'mw': 180.16, 'carbon_atoms': 6})
 
 
-def calculate_yield_metrics(solution: cobra.Solution, product_rxn: str,
-                            substrate_rxn: str, environment: str = 'Glu') -> Dict:
+def calculate_yield_metrics(
+    solution: cobra.Solution,
+    product_rxn: str,
+    substrate_rxn: str,
+    environment: str = "Glu",
+    min_growth_abs: float = 0.0,
+) -> Dict:
     """
-    Calculate comprehensive yield metrics with net ALA computation.
+    Calculate yield metrics and net product flux (ALA) with biological consistency.
+
+    - gross_flux: flux through the product-forming reaction (e.g. G1SAT).
+    - consumption: sum of downstream consumption fluxes (e.g. PPBNGS / hemB).
+    - net_flux: gross_flux - stoich * consumption, floored at 0.
+    - If biomass flux < min_growth_abs → production is treated as invalid (net_flux = 0).
     """
+
+def calculate_yield_metrics(
+    solution: cobra.Solution,
+    product_rxn: str,
+    substrate_rxn: str,
+    environment: str,
+    min_growth_abs: float,
+) -> Dict:
+
     try:
-        # Calculate gross ALA production from synthase reaction
-        gross_ala_flux = solution.fluxes.get(product_rxn, 0)
+        gross_flux = float(solution.fluxes.get(product_rxn, 0.0))
 
-        # Calculate ALA consumption by downstream heme pathway reactions
-        ala_consumer_reactions = ['PPBNGS']  # ALA consumer reactions
+        # hemB consumption (PPBNGS)
+        consumption = abs(float(solution.fluxes.get("PPBNGS", 0.0)))
 
-        ala_consumption_flux = 0.0
-        for consumer_rxn in ala_consumer_reactions:
-            if consumer_rxn in solution.fluxes:
-                flux_val = solution.fluxes[consumer_rxn]
-                if flux_val > 0:
-                    ala_consumption_flux += flux_val
+        # Subtract ALA consumption using the true stoichiometric coefficient of hemB (PPBNGS).
+        # In the iJN1463 model, the PPBNGS reaction consumes two molecules of ALA per
+        # porphobilinogen formed (stoichiometric coefficient = -2 for ALA). Therefore,
+        # the raw consumption flux must be multiplied by 2 to correctly account for the
+        # biochemical loss of ALA through the hemB step. Without applying this factor,
+        # net ALA production would be overestimated and biologically inaccurate.
+        stoich_ala_in_hemB = 2.0
+        
+        net_flux = max(0.0, gross_flux - stoich_ala_in_hemB * consumption)
 
-        # Net ALA production = Gross production - Consumption by downstream pathways
-        net_ala_flux = max(0, gross_ala_flux - ala_consumption_flux)
+        biomass_flux = float(solution.fluxes.get("BIOMASS_KT2440_WT3", 0.0))
 
-        # Calculate substrate uptake for yield normalization
-        substrate_uptake = abs(solution.fluxes.get(substrate_rxn, 0))
+        # epsilon constraint check
+        valid = True
+        if biomass_flux < min_growth_abs:
+            valid = False
+            gross_flux = 0.0
+            net_flux = 0.0
+            consumption = 0.0
 
-        # Avoid division by zero
+        substrate_uptake = abs(float(solution.fluxes.get(substrate_rxn, 0.0)))
         if substrate_uptake == 0:
             substrate_uptake = 1e-9
 
-        # Get substrate properties for yield calculations
-        substrate_props = get_substrate_properties(environment)
-        substrate_mw = substrate_props['mw']
-        substrate_carbon_atoms = substrate_props['carbon_atoms']
-
-        # ALA properties (C5H9NO3)
-        ala_mw = 131.13  # g/mol
-        ala_carbon_atoms = 5  # C5
-
-        # Calculate yields
-        yield_mmol_mmol = net_ala_flux / substrate_uptake
-        yield_mmol_g = yield_mmol_mmol / substrate_mw
-        carbon_yield = (net_ala_flux * ala_carbon_atoms) / (substrate_uptake * substrate_carbon_atoms)
+        yield_mmol_mmol = net_flux / substrate_uptake
+        yield_mmol_g = yield_mmol_mmol / 180.16  # glucose MW
+        carbon_yield = (net_flux * 5) / (substrate_uptake * 6)
 
         return {
-            'yield_mmol_mmol': yield_mmol_mmol,
-            'yield_mmol_g': yield_mmol_g,
-            'carbon_yield': carbon_yield,
-            'product_titer': net_ala_flux,
-            'substrate_uptake': substrate_uptake,
-            'gross_ala_flux': gross_ala_flux,
-            'net_ala_flux': net_ala_flux,
-            'ala_consumption_flux': ala_consumption_flux,
-            'ala_retention_efficiency': (net_ala_flux / gross_ala_flux * 100) if gross_ala_flux > 0 else 0,
-            'substrate_mw': substrate_mw,
-            'substrate_carbon_atoms': substrate_carbon_atoms
+            "yield_mmol_mmol": yield_mmol_mmol,
+            "yield_mmol_g": yield_mmol_g,
+            "carbon_yield": carbon_yield,
+            "product_titer": net_flux,
+            "substrate_uptake": substrate_uptake,
+            "gross_ala_flux": gross_flux,
+            "net_ala_flux": net_flux,
+            "ala_consumption_flux": consumption,
+            "biomass_flux": biomass_flux,
+            "valid_production": valid,
         }
 
     except Exception as e:
-        logger.error(f"Error calculating yield metrics: {e}")
+        logger.error(f"Yield error: {e}")
         return {
-            'yield_mmol_g': 0,
-            'yield_mmol_mmol': 0,
-            'carbon_yield': 0,
-            'product_titer': 0,
-            'substrate_uptake': 0,
-            'gross_ala_flux': 0,
-            'net_ala_flux': 0,
-            'ala_consumption_flux': 0,
-            'ala_retention_efficiency': 0,
-            'substrate_mw': 0,
-            'substrate_carbon_atoms': 0
+            "yield_mmol_mmol": 0,
+            "yield_mmol_g": 0,
+            "carbon_yield": 0,
+            "product_titer": 0,
+            "substrate_uptake": 0,
+            "gross_ala_flux": 0,
+            "net_ala_flux": 0,
+            "ala_consumption_flux": 0,
+            "biomass_flux": 0,
+            "valid_production": False,
         }
 
 
-def load_environment_specific_model(environment: str, models_dir: str = "models/final_constrained_rnaseq_thermo") -> cobra.Model:
-    """
-    Load environment-specific thermo-constrained model
-    """
-    model_filename = f"iJN1463_{environment}_ExprThermoConstrainedFile.xml"
-    model_path = f"{models_dir}/{model_filename}"
 
+
+
+def load_environment_specific_model(environment: str, models_dir: str = "models/final_constrained_rnaseq_thermo") -> cobra.Model:
+    model_filename = f"iJN1463_{environment}_preprocessed_with_DM.xml"
+    model_path = f"{models_dir}/{model_filename}"
     try:
         model = cobra.io.read_sbml_model(model_path)
         logger.info(f"Successfully loaded model for {environment} environment")
@@ -483,44 +687,31 @@ def load_environment_specific_model(environment: str, models_dir: str = "models/
 
 
 def validate_model_growth(model: cobra.Model, environment: Dict, min_growth: float = 0.01) -> bool:
-    """
-    Validate that model can grow under given conditions.
-    """
     try:
         with model:
             for rxn_id, bounds in (environment or {}).items():
                 if rxn_id in model.reactions:
                     model.reactions.get_by_id(rxn_id).bounds = bounds
-
             solution = model.optimize()
             return solution.status == 'optimal' and solution.objective_value >= min_growth
-
     except Exception as e:
         logger.error(f"Model validation failed: {e}")
         return False
 
 
 def calculate_flux_summary(model: cobra.Model, solution: cobra.Solution, key_reactions: List[str]) -> Dict:
-    """
-    Calculate flux summary for key metabolic reactions.
-    """
     flux_summary = {}
-
     for rxn_id in key_reactions:
-        if rxn_id in solution.fluxes:
-            flux_summary[rxn_id] = solution.fluxes[rxn_id]
-        else:
-            flux_summary[rxn_id] = 0.0
-
+        flux_summary[rxn_id] = float(solution.fluxes.get(rxn_id, 0.0)) if rxn_id in solution.fluxes else 0.0
     return flux_summary
 
 
 # Key metabolic reactions for analysis
 KEY_METABOLIC_REACTIONS = [
-    'G1SAT', 'GLUTRR', 'GLUTRS',      # C5 pathway
-    'PPBNGS',                         # ALA consumer
-    'ICDHyr', 'PPC', 'G6PDH2r',       # Precursor supply
-    'GLUDy', 'GLUSy',                 # Glutamate synthesis
-    'BIOMASS_KT2440_WT3',             # Biomass
-    'ATPS4r',                         # ATP maintenance
+    'G1SAT', 'GLUTRR', 'GLUTRS',
+    'PPBNGS',
+    'ICDHyr', 'PPC', 'G6PDH2r',
+    'GLUDy', 'GLUSy',
+    'BIOMASS_KT2440_WT3',
+    'ATPS4r',
 ]
