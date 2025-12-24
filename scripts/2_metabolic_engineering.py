@@ -1,402 +1,316 @@
-# 2_metabolic_engineering_enhanced.py
+#!/usr/bin/env python3
 """
 Systematic Multi-Environment Metabolic Engineering Evaluation for 5-ALA Production
-Q1 Journal Quality - Enhanced with Sensitivity and Robustness Analysis
+
+This script runs engineering scenarios across four environments (Glu, Cit, Ser, Fer).
+Key features:
+- Uses simulate_with_objective which returns (solution, min_growth_abs)
+- Applies epsilon-constraint correctly for ALA objective
+- Ensures DM for product exists once per base model (to allow export of excess product)
+- Handles infeasible/failed optimizations by recording zeros and continuing
+- Computes yield metrics via calculate_yield_metrics
+- Produces a consolidated CSV and robustness summary
 """
 
 import cobra
 import pandas as pd
 import numpy as np
 import yaml
-from typing import Dict, List
-import matplotlib.pyplot as plt
-import seaborn as sns
+from typing import Dict
 from pathlib import Path
 import sys
 import os
 import logging
-import highspy
-logging.getLogger('optlang').setLevel(logging.WARNING)
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-sys.stdout = open(os.devnull, 'w')
-# load/initialize model here
-sys.stdout = sys.__stdout__
-from models.model_utils import create_engineered_strain, simulate_with_objective, calculate_yield_metrics
 
-# Configure logging so create_engineered_strain messages are visible
+# ensure project root is on path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from models.model_utils import (
+    simulate_with_objective,
+    calculate_yield_metrics,
+    ensure_demand_for_product,
+    get_substrate_rxn_for_environment
+)
+from models.create_engineered_strain import create_engineered_strain
+
+# Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-def evaluate_multi_environment_engineering(base_model_paths: Dict, scenarios: Dict, 
-                                         environments: Dict, objectives: Dict) -> pd.DataFrame:
-    """
-    Comprehensive evaluation of engineering scenarios across multiple environments
-    """
-    all_engineering_results = []
-    
-    for env_name, model_path in base_model_paths.items():
-        print(f"\n🔧 Evaluating engineering scenarios in {env_name} environment...")
-        
-        try:            
-          
-            
-            
-            # Load environment-specific model
-            model = cobra.io.read_sbml_model(str(model_path))
-          
-            # Number of variables (columns) = number of reactions
-            num_col = len(model.reactions)
-            
-            # Number of constraints (rows) = number of metabolites
-            num_row = len(model.metabolites)
-            
-            # Get the objective expression (LinearExpression)
-            obj_expr = model.objective.expression
-            
-            # Convert to dict keyed by reaction.id
-            obj_dict = {rxn.id: coeff for rxn, coeff in model.objective.get_linear_coefficients(model.reactions).items()}
-            
-            # Build objective coefficient vector
-            obj = np.zeros(num_col)
-            for i, rxn in enumerate(model.reactions):
-                if rxn.id in obj_dict:
-                    obj[i] = obj_dict[rxn.id]
 
-            
-            col_cost  = obj.astype(np.float64)
-            col_lower = np.array([rxn.lower_bound for rxn in model.reactions], dtype=np.float64)
-            col_upper = np.array([rxn.upper_bound for rxn in model.reactions], dtype=np.float64)
-            
-            row_lower = np.zeros(num_row, dtype=np.float64)
-            row_upper = np.zeros(num_row, dtype=np.float64)
-            
-            # Stoichiometric matrix in CSR format
-            from cobra.util.array import create_stoichiometric_matrix
-            S = create_stoichiometric_matrix(model).tocsr()
-            start = S.indptr.astype(np.int32)
-            index = S.indices.astype(np.int32)
-            value = S.data.astype(np.float64)
-            
-            # Initialize HiGHS solver
-            highs = highspy.Highs()
-            highs.setOptionValue("output_flag", True)
-            
-            # Pass model directly with arrays
-            highs.passModel(num_col, num_row,
-                            len(value),   # number of nonzeros
-                            1,            # sense=1 means maximize
-                            col_cost,
-                            col_lower,
-                            col_upper,
-                            row_lower,
-                            row_upper,
-                            start,
-                            index,
-                            value)
-            
-            # Run the solver
-            highs.run()
-            
-            # Get the solution
-            solution = highs.getSolution()
-            print("Objective:", solution.objective_value)
-            print("Fluxes:", solution.col_value)
-
-
-            
-            # Continue with environment-specific configuration
-            environment_config = environments.get(env_name)
-
-            
-            if not environment_config:
-                print(f"⚠️ No environment config for {env_name}, skipping...")
-                continue
-            
-            # Evaluate all engineering scenarios
-            for scenario_name, modifications in scenarios.items():
-                print(f"  Testing scenario: {scenario_name}")
-                
-                try:
-                    # Create engineered strain
-                    # Pass reference objectives and environment so baselines are computed correctly
-                    engineered_model = create_engineered_strain(
-                        model,
-                        modifications,
-                        reference_objectives=['max_biomass', 'max_ala'],
-                        environment=environment_config,
-                        objective_to_rxn={'max_biomass': 'BIOMASS_KT2440_WT3', 'max_ala': 'G1SAT'},
-                        cap_value=6000.0
-                    )
-                    
-                    # Test all objective functions
-                    for obj_name, objective in objectives.items():
-                        # simulate_with_objective expects objective (reaction id or object) and environment
-                        solution = simulate_with_objective(engineered_model, objective, environment_config)
-                        
-                        # Calculate yield metrics
-                        if env_name == 'Glu':
-                            substrate_rxn = 'EX_glc__D_e'
-                        elif env_name == 'Cit':
-                            substrate_rxn = 'EX_cit_e'
-                        elif env_name == 'Ser':
-                            substrate_rxn = 'EX_ser__L_e'
-                        elif env_name == 'Fer':
-                            substrate_rxn = 'EX_fer_e'
-                        else:
-                            substrate_rxn = 'EX_glc__D_e'
-                            
-                        yield_metrics = calculate_yield_metrics(solution, 'G1SAT', substrate_rxn)
-                        
-                        # Use biomass flux for growth_rate (objective may be ALA)
-                        growth_flux = float(solution.fluxes.get('BIOMASS_KT2440_WT3', 0.0))
-                        ala_flux_gross = float(solution.fluxes.get('G1SAT', 0.0))
-                        ala_flux_net = yield_metrics['net_ala_flux']
-                        
-                        # Store comprehensive results
-                        result = {
-                            'environment': env_name,
-                            'scenario': scenario_name,
-                            'objective': obj_name,
-                            'growth_rate': growth_flux,
-                            'ala_flux': ala_flux_gross,
-                            'ala_flux_net': ala_flux_net,
-                            'ala_consumption': yield_metrics['ala_consumption_flux'],
-                            'glucose_uptake': abs(solution.fluxes.get('EX_glc__D_e', 0)),
-                            'solution_status': solution.status,
-                            'modifications': str(modifications),
-                            'modification_count': len(modifications),
-                            'yield_mmol_g': yield_metrics['yield_mmol_g'],
-                            'yield_mmol_mmol': yield_metrics['yield_mmol_mmol'],
-                            'carbon_yield': yield_metrics['carbon_yield'],
-                            'substrate_uptake': yield_metrics['substrate_uptake']
-                        }
-                        
-                        all_engineering_results.append(result)
-                        
-                        print(f"    ✅ {obj_name}: Growth = {growth_flux:.6f}, ALA_net = {ala_flux_net:.6f}")
-                            
-                except Exception as e:
-                    print(f"    ❌ Scenario {scenario_name} failed: {e}")
-                    continue
-                    
-        except Exception as e:
-            print(f"❌ Error processing environment {env_name}: {e}")
-            continue
-    
-    return pd.DataFrame(all_engineering_results)
-
-def calculate_robustness_metrics(engineering_df: pd.DataFrame) -> pd.DataFrame:
+# ---------------------------------------------------------
+# Helper: base model path map (four environments)
+# ---------------------------------------------------------
+def build_base_model_paths(models_dir: str = "models/final_constrained_rnaseq_thermo") -> Dict[str, str]:
     """
-    Calculate robustness metrics for engineering scenarios across environments
+    Return mapping environment -> SBML model path.
+    Ensure filenames match your preprocessed models.
     """
-    robustness_results = []
-    
-    for scenario in engineering_df['scenario'].unique():
-        scenario_data = engineering_df[engineering_df['scenario'] == scenario]
-        
-        # Calculate performance metrics across environments
-        env_performance = []
-        for env in scenario_data['environment'].unique():
-            env_data = scenario_data[scenario_data['environment'] == env]
-            production_data = env_data[env_data['objective'] == 'max_biomass']
-            
-            if len(production_data) > 0:
-                env_performance.append({
-                    'environment': env,
-                    'ala_production': production_data['ala_flux_net'].iloc[0],
-                    'growth_rate': production_data['growth_rate'].iloc[0],
-                    'yield': production_data['yield_mmol_g'].iloc[0]
-                })
-        
-        if len(env_performance) > 0:
-            ala_values = [p['ala_production'] for p in env_performance]
-            growth_values = [p['growth_rate'] for p in env_performance]
-            yield_values = [p['yield'] for p in env_performance]
-            
-            robustness_results.append({
-                'scenario': scenario,
-                'ala_mean': np.mean(ala_values),
-                'ala_std': np.std(ala_values),
-                'ala_cv': np.std(ala_values) / np.mean(ala_values) if np.mean(ala_values) > 0 else 0,
-                'growth_mean': np.mean(growth_values),
-                'growth_std': np.std(growth_values),
-                'growth_cv': np.std(growth_values) / np.mean(growth_values) if np.mean(growth_values) > 0 else 0,
-                'yield_mean': np.mean(yield_values),
-                'yield_std': np.std(yield_values),
-                'robustness_score': 1 / (1 + np.std(ala_values) / np.mean(ala_values)) if np.mean(ala_values) > 0 else 0,
-                'environments_tested': len(env_performance)
-            })
-    
-    return pd.DataFrame(robustness_results)
-
-def create_engineering_summary_visualization(engineering_df: pd.DataFrame, 
-                                           robustness_df: pd.DataFrame) -> plt.Figure:
-    """
-    Create comprehensive engineering summary visualization
-    """
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-    
-    # Filter for production objective
-    production_data = engineering_df[engineering_df['objective'] == 'max_biomass']
-    
-    # 1. ALA production by scenario and environment
-    scenario_env_performance = production_data.groupby(['scenario', 'environment'])['ala_flux_net'].mean().unstack()
-    
-    # Select top scenarios for clarity
-    top_scenarios = production_data.groupby('scenario')['ala_flux_net'].mean().nlargest(10).index
-    plot_data = scenario_env_performance.loc[top_scenarios]
-    
-    plot_data.plot(kind='bar', ax=ax1, width=0.8, alpha=0.8)
-    ax1.set_ylabel('Net ALA Production (mmol/gDW/h)', fontweight='bold')
-    ax1.set_title('A. ALA Production by Engineering Scenario and Environment', fontweight='bold', pad=20)
-    ax1.legend(title='Environment', bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax1.tick_params(axis='x', rotation=45)
-    ax1.grid(True, alpha=0.3, axis='y')
-    
-    # 2. Growth vs Production trade-off
-    scenarios_to_plot = production_data['scenario'].unique()[:15]  # Limit for clarity
-    for scenario in scenarios_to_plot:
-        scenario_data = production_data[production_data['scenario'] == scenario]
-        ax2.scatter(scenario_data['growth_rate'], scenario_data['ala_flux_net'], 
-                   s=80, alpha=0.7, label=scenario)
-    
-    ax2.set_xlabel('Growth Rate (h$^{-1}$)', fontweight='bold')
-    ax2.set_ylabel('Net ALA Production (mmol/gDW/h)', fontweight='bold')
-    ax2.set_title('B. Growth-Production Trade-off by Scenario', fontweight='bold', pad=20)
-    ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-    ax2.grid(True, alpha=0.3)
-    
-    # 3. Robustness analysis
-    top_robust = robustness_df.nlargest(10, 'robustness_score')
-    x_pos = np.arange(len(top_robust))
-    width = 0.35
-    
-    ax3.bar(x_pos - width/2, top_robust['ala_mean'], width, label='Mean ALA', alpha=0.8)
-    ax3.bar(x_pos + width/2, top_robust['ala_std'], width, label='Std Dev', alpha=0.8)
-    
-    ax3.set_xlabel('Engineering Scenario', fontweight='bold')
-    ax3.set_ylabel('ALA Production (mmol/gDW/h)', fontweight='bold')
-    ax3.set_title('C. Production Robustness Across Environments', fontweight='bold', pad=20)
-    ax3.set_xticks(x_pos)
-    ax3.set_xticklabels(top_robust['scenario'], rotation=45, ha='right')
-    ax3.legend()
-    ax3.grid(True, alpha=0.3, axis='y')
-    
-    # 4. Modification count vs improvement
-    improvement_data = []
-    for scenario in production_data['scenario'].unique():
-        scenario_data = production_data[production_data['scenario'] == scenario]
-        if len(scenario_data) > 0:
-            avg_ala = scenario_data['ala_flux_net'].mean()
-            mod_count = scenario_data['modification_count'].iloc[0]
-            improvement_data.append({
-                'scenario': scenario,
-                'modification_count': mod_count,
-                'ala_production': avg_ala
-            })
-    
-    improvement_df = pd.DataFrame(improvement_data)
-    ax4.scatter(improvement_df['modification_count'], improvement_df['ala_production'], 
-               s=100, alpha=0.7, color='purple', edgecolor='black')
-    
-    # Add trend line
-    if len(improvement_df) > 1:
-        z = np.polyfit(improvement_df['modification_count'], improvement_df['ala_production'], 1)
-        p = np.poly1d(z)
-        ax4.plot(improvement_df['modification_count'], p(improvement_df['modification_count']), 
-                "r--", alpha=0.8, label='Trend')
-    
-    ax4.set_xlabel('Number of Genetic Modifications', fontweight='bold')
-    ax4.set_ylabel('Average ALA Production (mmol/gDW/h)', fontweight='bold')
-    ax4.set_title('D. Engineering Complexity vs Production Benefit', fontweight='bold', pad=20)
-    ax4.legend()
-    ax4.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    return fig
-
-def main():
-    """
-    Execute comprehensive multi-environment metabolic engineering analysis
-    """
-    
-    # Load configuration
-    with open('config/engineering_scenarios.yaml', 'r') as f:
-        config = yaml.safe_load(f)
-    
-    print("🚀 Starting comprehensive multi-environment metabolic engineering analysis...")
-    
-    # Define model paths for all environments
-    base_model_paths = {
-        'Glu': 'models/final_constrained_rnaseq_thermo/iJN1463_Glu_ExprThermoConstrainedFile.xml',
-        'Cit': 'models/final_constrained_rnaseq_thermo/iJN1463_Cit_ExprThermoConstrainedFile.xml',
-        'Ser': 'models/final_constrained_rnaseq_thermo/iJN1463_Ser_ExprThermoConstrainedFile.xml',
-        'Fer': 'models/final_constrained_rnaseq_thermo/iJN1463_Fer_ExprThermoConstrainedFile.xml'
+    return {
+        "Glu": os.path.join(models_dir, "iJN1463_Glu_preprocessed_with_DM.xml"),
+        "Cit": os.path.join(models_dir, "iJN1463_Cit_preprocessed_with_DM.xml"),
+        "Ser": os.path.join(models_dir, "iJN1463_Ser_preprocessed_with_DM.xml"),
+        "Fer": os.path.join(models_dir, "iJN1463_Fer_preprocessed_with_DM.xml"),
     }
-    
-    # Perform comprehensive engineering evaluation
-    engineering_df = evaluate_multi_environment_engineering(
+
+
+# ---------------------------------------------------------
+# Main evaluation function
+# ---------------------------------------------------------
+def evaluate_multi_environment_engineering(
+    base_model_paths: Dict[str, str],
+    scenarios: Dict,
+    environments: Dict,
+    objectives: Dict
+) -> pd.DataFrame:
+    """
+    For each environment and each engineering scenario:
+      - load base model
+      - ensure DM for G1SAT exists once
+      - create engineered strain (create_engineered_strain handles modifications)
+      - simulate objectives using simulate_with_objective (returns sol, min_growth_abs)
+      - compute yield metrics using calculate_yield_metrics
+      - handle infeasible solutions by recording zeros
+    Returns a DataFrame with all results.
+    """
+
+    all_results = []
+
+    for env_name, model_path in base_model_paths.items():
+        logger.info(f"Evaluating environment: {env_name}")
+
+        # load base model
+        try:
+            base_model = cobra.io.read_sbml_model(str(model_path))
+        except Exception as e:
+            logger.error(f"Failed to load model for {env_name}: {e}")
+            continue
+
+        # environment bounds from config (may be empty)
+        env_config = environments.get(env_name, {})
+
+        # Apply environment bounds to base model (so ensure_demand uses same context)
+        with base_model:
+            for rxn_id, bounds in (env_config or {}).items():
+                if rxn_id in base_model.reactions:
+                    try:
+                        base_model.reactions.get_by_id(rxn_id).bounds = tuple(bounds)
+                    except Exception:
+                        logger.debug(f"Could not set bound for {rxn_id} in base model")
+
+        # Ensure DM for G1SAT exists ONCE on the base model (so engineered copies inherit it)
+        try:
+            # ensure_demand_for_product expects a reaction id; it will create DM for product metabolite
+            dm_id = ensure_demand_for_product(base_model, "G1SAT", dm_prefix="DM")
+            logger.info(f"Ensured DM for G1SAT on base model: {dm_id}")
+        except Exception as e:
+            logger.warning(f"Could not ensure DM for G1SAT on base model: {e}")
+            dm_id = None
+
+        # iterate scenarios
+        for scenario_name, modifications in scenarios.items():
+            logger.info(f"  Scenario: {scenario_name}")
+
+            try:
+                # Create engineered strain using create_engineered_strain
+                # create_engineered_strain should accept base_model and modifications and return a new model
+                engineered = create_engineered_strain(
+                    base_model,
+                    modifications,
+                    # pass environment and reference objectives if function supports them
+                    # (create_engineered_strain implementation may ignore extra args)
+                    lock_on_modify=True,
+                    cap_factor=10.0
+                )
+
+                # Ensure DM exists in engineered model too (safe no-op if already present)
+                try:
+                    dm_id_eng = ensure_demand_for_product(engineered, "G1SAT", dm_prefix="DM")
+                except Exception:
+                    dm_id_eng = None
+
+                # Evaluate all objectives for this engineered strain
+                for obj_name, objective in objectives.items():
+
+                    # simulate_with_objective returns (solution, min_growth_abs)
+                    sol, min_growth_abs = simulate_with_objective(
+                        engineered,
+                        objective,
+                        env_config,
+                        min_growth_fraction=0.01
+                    )
+
+                    # If optimization failed or infeasible, record zeros and continue
+                    if sol is None or getattr(sol, "status", None) != "optimal":
+                        status = getattr(sol, "status", "failed")
+                        logger.warning(f"    {obj_name}: solution status = {status} (scenario={scenario_name}, env={env_name})")
+                        all_results.append({
+                            "environment": env_name,
+                            "scenario": scenario_name,
+                            "objective": obj_name,
+                            "growth_rate": 0.0,
+                            "ala_flux": 0.0,
+                            "ala_flux_net": 0.0,
+                            "ala_consumption": 0.0,
+                            "substrate_uptake": 0.0,
+                            "solution_status": status,
+                            "modifications": str(modifications),
+                            "modification_count": len(modifications),
+                            "yield_mmol_g": 0.0,
+                            "yield_mmol_mmol": 0.0,
+                            "carbon_yield": 0.0,
+                            "valid_production": False,
+                            "dm_id": dm_id_eng,
+                        })
+                        continue
+
+                    # compute substrate reaction id for this environment
+                    substrate_rxn = get_substrate_rxn_for_environment(env_name)
+
+                    # compute yield metrics using the SAME min_growth_abs used in optimization
+                    yield_metrics = calculate_yield_metrics(
+                        sol,
+                        "G1SAT",
+                        substrate_rxn,
+                        environment=env_name,
+                        min_growth_abs=min_growth_abs
+                    )
+
+                    biomass_flux = yield_metrics.get("biomass_flux", 0.0)
+                    gross_ala = float(sol.fluxes.get("G1SAT", 0.0))
+                    net_ala = yield_metrics.get("net_ala_flux", 0.0)
+                    consumption = yield_metrics.get("ala_consumption_flux", 0.0)
+                    substrate_uptake = yield_metrics.get("substrate_uptake", 0.0)
+
+                    result = {
+                        "environment": env_name,
+                        "scenario": scenario_name,
+                        "objective": obj_name,
+                        "growth_rate": biomass_flux,
+                        "ala_flux": gross_ala,
+                        "ala_flux_net": net_ala,
+                        "ala_consumption": consumption,
+                        "substrate_uptake": substrate_uptake,
+                        "solution_status": sol.status,
+                        "modifications": str(modifications),
+                        "modification_count": len(modifications),
+                        "yield_mmol_g": yield_metrics.get("yield_mmol_g", 0.0),
+                        "yield_mmol_mmol": yield_metrics.get("yield_mmol_mmol", 0.0),
+                        "carbon_yield": yield_metrics.get("carbon_yield", 0.0),
+                        "valid_production": yield_metrics.get("valid_production", False),
+                        "dm_id": dm_id_eng,
+                    }
+
+                    all_results.append(result)
+
+                    logger.info(
+                        f"    {obj_name}: growth={biomass_flux:.5f}, "
+                        f"ALA_net={net_ala:.5f}, valid={yield_metrics.get('valid_production', False)}"
+                    )
+
+            except Exception as e:
+                logger.error(f"Scenario {scenario_name} failed in environment {env_name}: {e}")
+                # record failure row
+                all_results.append({
+                    "environment": env_name,
+                    "scenario": scenario_name,
+                    "objective": "all",
+                    "growth_rate": 0.0,
+                    "ala_flux": 0.0,
+                    "ala_flux_net": 0.0,
+                    "ala_consumption": 0.0,
+                    "substrate_uptake": 0.0,
+                    "solution_status": "failed",
+                    "modifications": str(modifications),
+                    "modification_count": len(modifications),
+                    "yield_mmol_g": 0.0,
+                    "yield_mmol_mmol": 0.0,
+                    "carbon_yield": 0.0,
+                    "valid_production": False,
+                    "dm_id": dm_id,
+                })
+                continue
+
+    return pd.DataFrame(all_results)
+
+
+# ---------------------------------------------------------
+# Robustness metrics
+# ---------------------------------------------------------
+def calculate_robustness_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute simple robustness metrics per scenario using max_biomass rows.
+    Returns DataFrame with mean, std, CV and a robustness score.
+    """
+    if df.empty:
+        raise ValueError("Engineering results dataframe is empty.")
+
+    if "scenario" not in df.columns:
+        raise ValueError("Missing 'scenario' column in engineering results.")
+
+    robustness = []
+
+    for scenario in df["scenario"].unique():
+        sub = df[(df["scenario"] == scenario) & (df["objective"] == "max_biomass")]
+
+        if sub.empty:
+            continue
+
+        ala_vals = sub["ala_flux_net"].values
+        ala_mean = np.mean(ala_vals)
+        ala_std = np.std(ala_vals)
+
+        robustness.append({
+            "scenario": scenario,
+            "ala_mean": ala_mean,
+            "ala_std": ala_std,
+            "ala_cv": ala_std / ala_mean if ala_mean > 0 else np.nan,
+            "robustness_score": 1 / (1 + (ala_std / ala_mean)) if ala_mean > 0 else 0,
+            "environments_tested": len(sub)
+        })
+
+    return pd.DataFrame(robustness)
+
+
+# ---------------------------------------------------------
+# Main
+# ---------------------------------------------------------
+def main():
+
+    # load config
+    with open("config/engineering_scenarios.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+    # build base model paths (ensure filenames are correct)
+    base_model_paths = build_base_model_paths(models_dir="models/final_constrained_rnaseq_thermo")
+
+    logger.info("Starting multi-environment engineering evaluation...")
+
+    # run evaluation
+    df = evaluate_multi_environment_engineering(
         base_model_paths,
-        config['engineering_scenarios'],
-        config['environments'],
-        config['objectives']
+        config.get("engineering_scenarios", {}),
+        config.get("environments", {}),
+        config.get("objectives", {})
     )
-    
-    # Calculate robustness metrics
-    robustness_df = calculate_robustness_metrics(engineering_df)
-    
-    # Save results
+
+    # save results
     results_dir = Path("results/tables")
     results_dir.mkdir(parents=True, exist_ok=True)
-    
-    engineering_df.to_csv(results_dir / "enhanced_engineering_results.csv", index=False)
-    robustness_df.to_csv(results_dir / "engineering_robustness.csv", index=False)
-    
-    # Create and save visualizations
-    print("\n📈 Creating engineering summary visualizations...")
-    summary_fig = create_engineering_summary_visualization(engineering_df, robustness_df)
-    figures_dir = Path("results/figures")
-    figures_dir.mkdir(parents=True, exist_ok=True)
-    summary_fig.savefig(figures_dir / "multi_environment_engineering_summary.png", 
-                       dpi=300, bbox_inches='tight')
-    
-    # Print comprehensive summary
-    print("\n" + "="*80)
-    print("MULTI-ENVIRONMENT METABOLIC ENGINEERING SUMMARY")
-    print("="*80)
-    
-    # Top performing scenarios
-    production_data = engineering_df[engineering_df['objective'] == 'max_biomass']
-    scenario_performance = production_data.groupby('scenario').agg({
-        'ala_flux_net': ['mean', 'std', 'count'],
-        'growth_rate': 'mean',
-        'yield_mmol_g': 'mean',
-        'modification_count': 'first'
-    }).round(4)
-    
-    scenario_performance.columns = ['ala_mean', 'ala_std', 'env_count', 'growth_mean', 'yield_mean', 'mod_count']
-    scenario_performance = scenario_performance.sort_values('ala_mean', ascending=False)
-    
-    print("\n🏆 Top 5 Engineering Scenarios (Average ALA Production):")
-    print(scenario_performance.head(5))
-    
-    # Robustness analysis summary
-    robust_summary = robustness_df.sort_values('robustness_score', ascending=False)
-    print(f"\n🛡️ Top 5 Most Robust Scenarios:")
-    for _, row in robust_summary.head(5).iterrows():
-        print(f"  {row['scenario']:30} | Robustness: {row['robustness_score']:.3f} | "
-              f"ALA: {row['ala_mean']:.4f} ± {row['ala_std']:.4f}")
-    
-    # Environment-specific recommendations
-    print(f"\n🌍 Environment-Specific Recommendations:")
-    for env in ['Glu', 'Cit', 'Ser', 'Fer']:
-        env_data = production_data[production_data['environment'] == env]
-        if len(env_data) > 0:
-            best_env_scenario = env_data.loc[env_data['ala_flux_net'].idxmax()]
-            print(f"  {env}: {best_env_scenario['scenario']} "
-                  f"(ALA: {best_env_scenario['ala_flux_net']:.4f})")
-    
-    print(f"\n✅ Enhanced metabolic engineering analysis completed successfully!")
+    out_csv = results_dir / "enhanced_engineering_results.csv"
+    df.to_csv(out_csv, index=False)
+    logger.info(f"Saved engineering results to {out_csv}")
+
+    # compute robustness and save
+    try:
+        robustness_df = calculate_robustness_metrics(df)
+        robustness_df.to_csv(results_dir / "engineering_robustness.csv", index=False)
+        logger.info(f"Saved robustness metrics to {results_dir / 'engineering_robustness.csv'}")
+    except Exception as e:
+        logger.warning(f"Could not compute robustness metrics: {e}")
+
+    logger.info("✅ Engineering evaluation completed successfully.")
+
 
 if __name__ == "__main__":
     main()
