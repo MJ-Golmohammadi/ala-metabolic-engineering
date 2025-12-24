@@ -3,7 +3,7 @@
 """
 Main engineering pipeline (final version).
 
-- Reads expression CSV (data/expression_by_reaction.csv)
+- Reads expression CSV (expression_txt_files/expression_by_reaction.csv)
 - Computes scaling factors per environment
 - Applies wild-secondary baseline locks on base models
 - Builds engineered strains using create_engineered_strain
@@ -47,7 +47,7 @@ def build_base_model_paths(models_dir: str = "models/final_constrained_rnaseq_th
 
 def main():
     cfg_path = "config/engineering_scenarios.yaml"
-    expr_csv = "data/expression_by_reaction.csv"  # user-provided CSV
+    expr_csv = "expression_txt_files/expression_by_reaction.csv"  # user-provided CSV
     if not os.path.exists(cfg_path):
         raise FileNotFoundError(f"Config not found: {cfg_path}")
     if not os.path.exists(expr_csv):
