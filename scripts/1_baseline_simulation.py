@@ -20,7 +20,7 @@ import yaml
 import sys
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 import matplotlib.pyplot as plt
 import seaborn as sns
 import logging
@@ -222,6 +222,21 @@ def optimize_max_ala_with_min_growth(
     return solution
 
 
+def _extract_solution(raw: Any) -> Any:
+    """
+    Helper to normalize the return value of simulate_with_objective.
+    If the helper returns a tuple (solution, info) or similar, return the first element.
+    Otherwise return raw if it looks like a cobra Solution.
+    """
+    if isinstance(raw, tuple):
+        if len(raw) == 0:
+            return None
+        # prefer first element as the Solution
+        candidate = raw[0]
+        return candidate
+    return raw
+
+
 def main():
     """
     Run baseline simulations for all four environments and save results.
@@ -247,15 +262,27 @@ def main():
             for obj_name, objective in config['objectives'].items():
                 logger.info(f"  Running objective: {obj_name}")
                 try:
+                    # call simulate_with_objective and normalize return
                     if obj_name == "max_ala":
-                        solution = simulate_with_objective(
+                        _raw = simulate_with_objective(
                             model,
                             'G1SAT',
                             environment_config,
                             min_growth_fraction=0.01
                         )
                     else:
-                        solution = simulate_with_objective(model, objective, environment_config)
+                        _raw = simulate_with_objective(model, objective, environment_config)
+
+                    # normalize output: many helpers return (solution, info) or solution
+                    solution = _extract_solution(_raw)
+
+                    # sanity checks
+                    if solution is None:
+                        raise RuntimeError("simulate_with_objective returned None")
+                    if not hasattr(solution, "fluxes"):
+                        # log debug info about returned object
+                        logger.debug("simulate_with_objective returned: %r", _raw)
+                        raise RuntimeError("simulate_with_objective did not return a cobra Solution")
 
                     substrate_rxn = get_substrate_rxn_for_environment(env_name)
                     yield_metrics = calculate_yield_metrics(solution, 'G1SAT', substrate_rxn, environment=env_name,
@@ -286,6 +313,11 @@ def main():
 
                 except Exception as e:
                     logger.error(f"    Simulation failed for {obj_name} in {env_name}: {e}")
+                    # include debug dump of returned object if available
+                    try:
+                        logger.debug("Last simulate_with_objective raw return: %r", _raw)
+                    except Exception:
+                        pass
                     all_simulation_results.append({
                         'environment': env_name,
                         'objective': obj_name,
@@ -334,4 +366,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
