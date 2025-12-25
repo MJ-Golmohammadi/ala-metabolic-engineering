@@ -30,7 +30,7 @@ from models.model_utils import (
     ensure_demand_for_metabolite,
     get_substrate_rxn_for_environment
 )
-from models.create_engineered_strain import create_engineered_strain
+from models.model_utils import create_engineered_strain
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
