@@ -520,13 +520,6 @@ def get_substrate_properties(environment: str) -> Dict:
     return substrate_properties.get(environment, {'mw': 180.16, 'carbon_atoms': 6})
 
 
-def calculate_yield_metrics(
-    solution: cobra.Solution,
-    product_rxn: str,
-    substrate_rxn: str,
-    environment: str = "Glu",
-    min_growth_abs: float = 0.0,
-) -> Dict:
     """
     Calculate yield metrics and net product flux (ALA) with biological consistency.
 
@@ -558,7 +551,7 @@ def calculate_yield_metrics(
         # net ALA production would be overestimated and biologically inaccurate.
         stoich_ala_in_hemB = 2.0
         
-        net_flux = max(0.0, gross_flux - stoich_ala_in_hemB * consumption)
+        net_ala_flux = max(0.0, gross_flux - stoich_ala_in_hemB * consumption)
 
         biomass_flux = float(solution.fluxes.get("BIOMASS_KT2440_WT3", 0.0))
 
@@ -567,25 +560,38 @@ def calculate_yield_metrics(
         if biomass_flux < min_growth_abs:
             valid = False
             gross_flux = 0.0
-            net_flux = 0.0
+            net_ala_flux = 0.0
             consumption = 0.0
 
+        # Calculate substrate uptake for yield normalization
         substrate_uptake = abs(float(solution.fluxes.get(substrate_rxn, 0.0)))
+        
+        # Avoid division by zero
         if substrate_uptake == 0:
             substrate_uptake = 1e-9
 
-        yield_mmol_mmol = net_flux / substrate_uptake
-        yield_mmol_g = yield_mmol_mmol / 180.16  # glucose MW
-        carbon_yield = (net_flux * 5) / (substrate_uptake * 6)
+        # Get substrate properties for yield calculations
+        substrate_props = get_substrate_properties(environment)
+        substrate_mw = substrate_props['mw']
+        substrate_carbon_atoms = substrate_props['carbon_atoms']
+
+        # ALA properties (C5H9NO3)
+        ala_mw = 131.13  # g/mol
+        ala_carbon_atoms = 5  # C5
+
+        # Calculate yields
+        yield_mmol_mmol = net_ala_flux / substrate_uptake
+        yield_mmol_g = yield_mmol_mmol / substrate_mw
+        carbon_yield = (net_ala_flux * ala_carbon_atoms) / (substrate_uptake * substrate_carbon_atoms)
 
         return {
             "yield_mmol_mmol": yield_mmol_mmol,
             "yield_mmol_g": yield_mmol_g,
             "carbon_yield": carbon_yield,
-            "product_titer": net_flux,
+            "product_titer": net_ala_flux,
             "substrate_uptake": substrate_uptake,
             "gross_ala_flux": gross_flux,
-            "net_ala_flux": net_flux,
+            "net_ala_flux": net_ala_flux,
             "ala_consumption_flux": consumption,
             "biomass_flux": biomass_flux,
             "valid_production": valid,
