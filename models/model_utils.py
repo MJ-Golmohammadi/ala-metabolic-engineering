@@ -172,7 +172,7 @@ def read_expression_scaling(csv_path: str, environment: str, expr_col_prefix: st
       - factor = value / min_value
     Returns DataFrame with columns: reaction_id, expr_value, factor
     """
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, sep=';')
     env_col = f"{expr_col_prefix}{environment}"
     if env_col not in df.columns:
         raise KeyError(f"Expression column {env_col} not found in {csv_path}")
