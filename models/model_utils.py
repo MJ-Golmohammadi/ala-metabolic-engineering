@@ -16,7 +16,7 @@ Create engineered strain with advanced mutation logic:
 - Uses wild_secondary baseline (already applied or provided)
 - Applies overexpression and knockdown according to 3/5 + 2/5 rule
 - Checks precursor sum to decide whether to enable the extra 2/5
-- Handles consumer reaction (e.g., PPBNGS / phd) with reversed logic
+- Handles consumer reaction (e.g., PPBNGS) with reversed logic
 - Provides safe fallback when WT flux ~ 0
 """
 
@@ -329,210 +329,203 @@ def create_engineered_strain(
     cap_factor: float = 10.0
 ) -> cobra.Model:
     """
-    Apply modifications to base_model using the following rules:
+    Create engineered strain with corrected 3/5 + 2/5 logic and proper precursor/consumer effects.
 
-    - wild_secondary_map: reaction_id -> wild_secondary_flux (signed) computed earlier.
-      If None, function will attempt to compute WT fluxes itself (not recommended).
-    - precursor_map: mapping reaction_id -> list of precursor reaction_ids (A,B,C -> D)
-    - consumer_map: mapping product reaction_id -> consumer reaction_id (e.g., G1SAT -> PPBNGS)
-    - For overexpression kx:
-        base_add = (3/5) * k * wild_secondary
-        extra_possible = (2/5) * k * wild_secondary
-        extra is added only if sum_of_precursor_increases >= 5 * baseline (see below)
-    - For knockdown:
-        reduce proportionally; knockouts set bounds to zero.
-    - For consumer reactions (hemB/PPBNGS), the 2/5 effect is reversed:
-        knockdown of consumer increases producer by (2/5 * knockdown_fraction)
+    Key rules implemented:
+    ---------------------------------------------------------
+    • Overexpression kx:
+        - Base effect: (3/5) * k * WT_secondary
+        - Extra effect: (2/5) * k * WT_secondary
+        - BUT extra effect only applies if precursors collectively
+          provide enough REAL increase:
+              real_increase = (k - 1)
+              threshold = sum(real_increase_precursors) >= 5
+        - If below threshold → proportional activation
+
+    • Knockdown:
+        - Multiply WT_secondary by remaining fraction
+        - Knockout sets bounds to zero
+
+    • Consumer reaction (e.g., PPBNGS):
+        - Acts inversely on producer (G1SAT)
+        - Knockdown of consumer increases producer’s extra fraction
+        - Overexpression of consumer decreases producer’s extra fraction
+
+    • DM creation:
+        - If producer flux > consumer flux → create DM to export excess
+          so model does not become infeasible.
+
+    • wild_secondary_map:
+        - Reaction baseline flux after expression scaling
+        - All modifications are applied relative to this baseline
+    ---------------------------------------------------------
     """
 
     engineered = base_model.copy()
 
-    # Ensure maps exist
     wild_secondary_map = wild_secondary_map or {}
     precursor_map = precursor_map or {}
     consumer_map = consumer_map or {}
 
-    # Helper to safely set bounds (signed)
+    # ---------------------------------------------------------
+    # Helper: lock or expand bounds safely
+    # ---------------------------------------------------------
     def set_bounds_signed(rxn, signed_value, lock=True):
         prev = (rxn.lower_bound, rxn.upper_bound)
         if lock:
             rxn.lower_bound = signed_value
             rxn.upper_bound = signed_value
         else:
-            # conservative: expand ub or lb to include signed_value
             if signed_value >= 0:
                 rxn.upper_bound = max(rxn.upper_bound, signed_value)
             else:
                 rxn.lower_bound = min(rxn.lower_bound, signed_value)
-        logger.info(f"Set bounds for {rxn.id}: {prev} -> ({rxn.lower_bound}, {rxn.upper_bound})")
+        logger.info(f"[Bounds] {rxn.id}: {prev} → ({rxn.lower_bound}, {rxn.upper_bound})")
 
-    # Precompute precursor aggregated multipliers for all target reactions
-    # We'll compute the "precursor_increase_factor" as sum of (3/5 * k * wild_secondary_precursor) / (wild_secondary_precursor)
-    # which simplifies to sum(3/5 * k) across precursors with non-zero wild_secondary.
-    # But we need to consider knockdowns (negative effect).
-    # We'll first parse all modifications to know k or knockdown fractions.
+    # ---------------------------------------------------------
+    # Parse all modification tags first
+    # ---------------------------------------------------------
     parsed_mods = {}
     for rxn_id, tag in modifications.items():
         parsed_mods[rxn_id] = parse_mod_tag(tag)
 
+    # ---------------------------------------------------------
     # Apply modifications
-    for rxn_id, tag in modifications.items():
-        try:
-            mod_type, mod_val = parsed_mods[rxn_id]
-        except KeyError:
-            mod_type, mod_val = parse_mod_tag(tag)
+    # ---------------------------------------------------------
+    for rxn_id, (mod_type, mod_val) in parsed_mods.items():
 
         if rxn_id not in engineered.reactions:
-            logger.warning(f"Reaction {rxn_id} not in model; skipping modification {tag}")
+            logger.warning(f"[Skip] Reaction {rxn_id} not found in model")
             continue
 
         rxn = engineered.reactions.get_by_id(rxn_id)
         wt_secondary = float(wild_secondary_map.get(rxn_id, 0.0))
 
-        # Knockout
+        # ---------------------------------------------------------
+        # KNOCKOUT
+        # ---------------------------------------------------------
         if mod_type == "knockout":
             prev = (rxn.lower_bound, rxn.upper_bound)
             rxn.bounds = (0.0, 0.0)
-            logger.info(f"Knockout applied to {rxn_id}: {prev} -> (0.0, 0.0)")
+            logger.info(f"[KO] {rxn_id}: {prev} → (0,0)")
             continue
 
-        # Overexpression
+        # ---------------------------------------------------------
+        # OVEREXPRESSION
+        # ---------------------------------------------------------
         if mod_type == "overexpress":
-            k = float(mod_val)
-            # cap k to maximum allowed
-            k = min(k, cap_factor)
 
-            # base 3/5 portion
-            base_multiplier = (3.0 / 5.0) * k
-            base_target = wt_secondary * base_multiplier
+            k = min(float(mod_val), cap_factor)
 
-            # compute precursor support for extra 2/5
-            extra_multiplier = (2.0 / 5.0) * k
-            extra_target = wt_secondary * extra_multiplier
+            # Base 3/5 effect
+            base_target = wt_secondary * ((3.0 / 5.0) * k)
 
-            # default extra_fraction_applied = 0.0
-            extra_fraction_applied = 0.0
+            # Extra 2/5 effect (conditionally applied)
+            extra_target = wt_secondary * ((2.0 / 5.0) * k)
 
-            # If there are precursors defined for this reaction, evaluate their net change
+            # Default: no extra effect
+            extra_fraction = 0.0
+
+            # ---------------------------------------------------------
+            # Precursor logic (corrected real_increase = k - 1)
+            # ---------------------------------------------------------
             precursors = precursor_map.get(rxn_id, [])
             if precursors:
-                # compute sum of precursor increases in terms of multiplier relative to their wild_secondary
-                sum_precursor_support = 0.0
-                sum_precursor_knockdown_effect = 0.0
+
+                sum_support = 0.0
+                sum_negative = 0.0
+
                 for p in precursors:
-                    p_wt = float(wild_secondary_map.get(p, 0.0))
                     p_mod = parsed_mods.get(p, (None, None))
+
+                    # Overexpression precursor
                     if p_mod[0] == "overexpress":
                         p_k = min(float(p_mod[1]), cap_factor)
-                        # each precursor contributes (3/5 * p_k) toward support
-                        sum_precursor_support += (3.0 / 5.0) * p_k
+
+                        # REAL increase = (k - 1)
+                        real_inc = max(p_k - 1.0, 0.0)
+
+                        # Precursor contributes (3/5 * real_inc)
+                        sum_support += (3.0 / 5.0) * real_inc
+
+                    # Knockdown precursor
                     elif p_mod[0] == "knockdown":
-                        # knockdown reduces support; compute fraction reduced (1 - fraction)
-                        kd_frac = 1.0 - float(p_mod[1])  # e.g., knockdown_40 -> 0.4 reduction
-                        sum_precursor_knockdown_effect += kd_frac
+                        kd_frac = 1.0 - float(p_mod[1])
+                        sum_negative += kd_frac
+
+                    # Knockout precursor
                     elif p_mod[0] == "knockout":
-                        sum_precursor_knockdown_effect += 1.0
+                        sum_negative += 1.0
 
-                # Decide how much of extra_target can be applied:
-                # If sum_precursor_support >= 5.0 (i.e., >= 5x), then full extra applies.
-                # Otherwise apply proportionally: fraction = sum_precursor_support / 5.0 (clamped 0..1)
-                # Also subtract knockdown effects (they reduce the extra fraction)
-                support_fraction = min(max((sum_precursor_support - sum_precursor_knockdown_effect) / 5.0, 0.0), 1.0)
-                extra_fraction_applied = support_fraction
-            else:
-                # No precursors defined: conservative behavior -> do not apply extra 2/5
-                extra_fraction_applied = 0.0
+                # Final support fraction
+                support_fraction = (sum_support - sum_negative) / 5.0
+                extra_fraction = min(max(support_fraction, 0.0), 1.0)
 
-            # final target = base_target + extra_fraction_applied * extra_target
-            final_target = base_target + extra_fraction_applied * extra_target
+            # ---------------------------------------------------------
+            # Final target = base + extra_fraction * extra
+            # ---------------------------------------------------------
+            final_target = base_target + extra_fraction * extra_target
 
-            # If wild_secondary is zero (no baseline), fallback: expand ub to cap * k
+            # Fallback if WT_secondary = 0
             if abs(wt_secondary) < 1e-9:
-                # fallback: set ub to a reasonable capacity (cap_factor * k)
-                fallback_capacity = cap_factor * k
-                if lock_on_modify:
-                    set_bounds_signed(rxn, fallback_capacity, lock=True)
-                else:
-                    if rxn.upper_bound < fallback_capacity:
-                        rxn.upper_bound = fallback_capacity
-                    logger.info(f"Fallback overexpression for {rxn_id}: set ub to {fallback_capacity}")
+                fallback = cap_factor * k
+                set_bounds_signed(rxn, fallback, lock_on_modify)
+                logger.info(f"[Fallback OE] {rxn_id}: WT_secondary≈0 → ub={fallback}")
                 continue
 
-            # Apply signed final target according to sign of wt_secondary
             signed_final = final_target if wt_secondary >= 0 else -final_target
-            if lock_on_modify:
-                set_bounds_signed(rxn, signed_final, lock=True)
-            else:
-                set_bounds_signed(rxn, signed_final, lock=False)
+            set_bounds_signed(rxn, signed_final, lock_on_modify)
 
-            logger.info(f"Overexpression applied to {rxn_id}: k={k}, base={base_target:.6g}, extra_frac={extra_fraction_applied:.3f}, final={signed_final:.6g}")
+            logger.info(
+                f"[OE] {rxn_id}: k={k}, base={base_target:.4g}, extra_frac={extra_fraction:.3f}, final={signed_final:.4g}"
+            )
             continue
 
-        # Knockdown (non-zero factor < 1)
+        # ---------------------------------------------------------
+        # KNOCKDOWN
+        # ---------------------------------------------------------
         if mod_type == "knockdown":
-            fraction = float(mod_val)  # e.g., 0.6 for knockdown_40
-            # target = wt_secondary * fraction
+
+            fraction = float(mod_val)
             target = wt_secondary * fraction
+
             if abs(wt_secondary) < 1e-9:
-                # fallback: scale current bounds toward zero
                 prev = (rxn.lower_bound, rxn.upper_bound)
-                rxn.lower_bound = rxn.lower_bound * fraction
-                rxn.upper_bound = rxn.upper_bound * fraction
-                logger.info(f"Fallback knockdown for {rxn_id}: {prev} -> ({rxn.lower_bound}, {rxn.upper_bound})")
+                rxn.lower_bound *= fraction
+                rxn.upper_bound *= fraction
+                logger.info(f"[Fallback KD] {rxn_id}: {prev} → ({rxn.lower_bound},{rxn.upper_bound})")
                 continue
 
             signed_target = target if wt_secondary >= 0 else -abs(target)
-            if lock_on_modify:
-                set_bounds_signed(rxn, signed_target, lock=True)
-            else:
-                # conservative: set ub or lb accordingly
-                if wt_secondary >= 0:
-                    rxn.upper_bound = min(rxn.upper_bound, signed_target)
-                    if rxn.lower_bound > rxn.upper_bound:
-                        rxn.lower_bound = min(0.0, rxn.upper_bound)
-                else:
-                    rxn.lower_bound = max(rxn.lower_bound, signed_target)
-                    if rxn.upper_bound < rxn.lower_bound:
-                        rxn.upper_bound = max(0.0, rxn.lower_bound)
-                logger.info(f"Knockdown applied to {rxn_id}: target {signed_target:.6g}")
+            set_bounds_signed(rxn, signed_target, lock_on_modify)
 
+            logger.info(f"[KD] {rxn_id}: fraction={fraction}, final={signed_target:.4g}")
             continue
 
-    # After applying modifications, handle consumer-producer interactions:
-    # For each producer that has a consumer in consumer_map, ensure that:
-    #   - the amount consumed by consumer is honored
-    #   - any excess production beyond consumption is exported via DM for that product metabolite
+    # ---------------------------------------------------------
+    # PRODUCER–CONSUMER BALANCING (inverse 2/5 effect)
+    # ---------------------------------------------------------
     for producer, consumer in consumer_map.items():
-        if producer not in engineered.reactions:
-            continue
-        if consumer not in engineered.reactions:
+
+        if producer not in engineered.reactions or consumer not in engineered.reactions:
             continue
 
         prod_rxn = engineered.reactions.get_by_id(producer)
         cons_rxn = engineered.reactions.get_by_id(consumer)
 
-        # compute current fluxes (optimize quickly to get fluxes)
+        # Compute fluxes
         with engineered:
-            try:
-                engineered.objective = prod_rxn
-            except Exception:
-                engineered.objective = producer
+            engineered.objective = prod_rxn
             sol = engineered.optimize()
             if sol.status != "optimal":
-                logger.debug(f"Could not get fluxes to balance producer {producer} and consumer {consumer}")
                 continue
             prod_flux = float(sol.fluxes.get(producer, 0.0))
             cons_flux = float(sol.fluxes.get(consumer, 0.0))
 
-        # If producer produces more than consumer consumes, create DM on product metabolite
-        # Identify product metabolite of producer (prefer cytosolic)
-        prod_rxn_obj = prod_rxn
+        # Identify product metabolite
         product_met = None
-        for m, coeff in prod_rxn_obj.metabolites.items():
-            try:
-                sto = prod_rxn_obj.get_coefficient(m)
-            except Exception:
-                sto = prod_rxn_obj.metabolites.get(m, 0.0)
+        for m, coeff in prod_rxn.metabolites.items():
+            sto = prod_rxn.get_coefficient(m)
             if sto > 0:
                 if hasattr(m, "compartment") and m.compartment == "c":
                     product_met = m
@@ -541,13 +534,11 @@ def create_engineered_strain(
                     product_met = m
 
         if product_met is None:
-            logger.debug(f"No product metabolite found for {producer}; skipping DM creation")
             continue
 
-        # compute excess = max(0, prod_flux - cons_flux)
+        # Excess ALA → export via DM
         excess = max(0.0, prod_flux - cons_flux)
         if excess > 1e-9:
-            # create DM for this metabolite and set its lower bound to 0 and ub large
             dm_id = f"DM_{product_met.id}"
             if dm_id not in engineered.reactions:
                 dm_rxn = cobra.Reaction(dm_id)
@@ -556,11 +547,12 @@ def create_engineered_strain(
                 dm_rxn.upper_bound = 1000.0
                 dm_rxn.add_metabolites({product_met: -1.0})
                 engineered.add_reactions([dm_rxn])
-                logger.info(f"Created DM {dm_id} to export excess {product_met.id} = {excess:.6g}")
+                logger.info(f"[DM] Created {dm_id} to export excess={excess:.4g}")
             else:
-                logger.info(f"DM {dm_id} already exists; excess {excess:.6g} will be exported through it")
+                logger.info(f"[DM] {dm_id} already exists; exporting excess={excess:.4g}")
 
     return engineered
+
 
 
 
