@@ -93,6 +93,26 @@ def parse_mod_tag(tag: str):
 
 
 
+def hard_lock_with_auto_supply(model, rxn_id, target_flux, big_M=1000.0):
+    """
+    Hard-lock a reaction to a fixed flux value while automatically ensuring
+    that all required substrates/cofactors are supplied via artificial supply
+    reactions. This prevents infeasibility when multiple reactions are locked.
+
+    Steps:
+        1. Add unlimited supply for all consumed metabolites.
+        2. Set reaction bounds to (target_flux, target_flux).
+    """
+    rxn = model.reactions.get_by_id(rxn_id)
+
+    # Ensure all substrates/cofactors can be produced
+    ensure_unlimited_supply_for_reaction(model, rxn, big_M=big_M)
+
+    # Hard lock the reaction
+    rxn.bounds = (target_flux, target_flux)
+
+
+
 def ensure_demand_for_product(model: cobra.Model, reaction_id: str, dm_prefix: str = "DM") -> str:
     """
     Ensure a demand reaction exists for a product of `reaction_id`.
@@ -349,21 +369,6 @@ def create_engineered_strain(
     precursor_map = precursor_map or {}
     consumer_map = consumer_map or {}
 
-    # helper to set bounds atomically and safely
-    def set_bounds_atomic(rxn, value):
-        prev = (rxn.lower_bound, rxn.upper_bound)
-        try:
-            rxn.bounds = (value, value)
-        except Exception:
-            # fallback: set upper then lower (or lower then upper) to avoid transient invalid state
-            if value >= 0:
-                rxn.upper_bound = value
-                rxn.lower_bound = value
-            else:
-                rxn.lower_bound = value
-                rxn.upper_bound = value
-        logger.info(f"[Bounds] {rxn.id}: {prev} -> ({rxn.lower_bound}, {rxn.upper_bound})")
-
     # parse modifications
     parsed = {}
     for rxn_id, tag in modifications.items():
@@ -384,7 +389,7 @@ def create_engineered_strain(
 
         # KNOCKOUT
         if mtype == "knockout":
-            rxn.bounds = (0.0, 0.0)
+            hard_lock_with_auto_supply(engineered, rxn_id, 0.0)
             logger.info(f"[KO] {rxn_id} locked to 0")
             continue
 
@@ -393,7 +398,7 @@ def create_engineered_strain(
             fraction = float(mval)  # remaining fraction (e.g., 0.6)
             if abs(wt_secondary) >= 1e-12:
                 target = wt_secondary * fraction
-                set_bounds_atomic(rxn, target)
+                hard_lock_with_auto_supply(engineered, rxn_id, target)
                 logger.info(f"[KD] {rxn_id}: wt_secondary={wt_secondary:.6g} -> target={target:.6g}")
             else:
                 # fallback: scale current bounds conservatively
@@ -436,12 +441,12 @@ def create_engineered_strain(
                 base_target = wt_secondary * base_mult
                 extra_target = wt_secondary * extra_mult
                 final_target = base_target + extra_fraction * extra_target
-                set_bounds_atomic(rxn, final_target)
+                hard_lock_with_auto_supply(engineered, rxn_id, final_target)
                 logger.info(f"[OE] {rxn_id}: wt_secondary={wt_secondary:.6g}, k={k}, base={base_target:.6g}, extra_frac={extra_fraction:.3f}, final={final_target:.6g}")
             else:
                 # fallback capacity when no WT baseline exists: set a reasonable capacity
-                fallback = cap_factor * k
-                set_bounds_atomic(rxn, fallback)
+                fallback = cap_factor * k              
+                hard_lock_with_auto_supply(engineered, rxn_id, fallback)
                 logger.info(f"[OE-fallback] {rxn_id}: WT_secondary≈0 -> fallback ub={fallback}")
             continue
 
@@ -641,11 +646,44 @@ def validate_model_growth(model: cobra.Model, environment: Dict, min_growth: flo
         return False
 
 
+
+
 def calculate_flux_summary(model: cobra.Model, solution: cobra.Solution, key_reactions: List[str]) -> Dict:
     flux_summary = {}
     for rxn_id in key_reactions:
         flux_summary[rxn_id] = float(solution.fluxes.get(rxn_id, 0.0)) if rxn_id in solution.fluxes else 0.0
     return flux_summary
+
+
+
+def ensure_unlimited_supply_for_reaction(model, rxn, supply_prefix="SUPPLY_", big_M=1000.0):
+    """
+    Create artificial supply reactions for all substrates (negative stoichiometry)
+    consumed by a reaction. This guarantees that hard-locking the reaction will
+    never make the model infeasible due to missing precursors or cofactors.
+
+    Example:
+        A + NADPH → B
+        This function will create:
+            SUPPLY_A:   → A
+            SUPPLY_nadph_c: → nadph_c
+    """
+    for met, coeff in rxn.metabolites.items():
+        if coeff < 0:  # substrate or cofactor
+            supply_id = f"{supply_prefix}{met.id}"
+            if supply_id in model.reactions:
+                continue  # already exists
+
+            supply_rxn = cobra.Reaction(supply_id)
+            supply_rxn.name = f"Artificial supply for {met.id}"
+            supply_rxn.lower_bound = 0.0      # only produce
+            supply_rxn.upper_bound = big_M    # unlimited production
+
+            # nothing → metabolite
+            supply_rxn.add_metabolites({met: 1.0})
+
+            model.add_reactions([supply_rxn])
+
 
 
 # Key metabolic reactions for analysis
