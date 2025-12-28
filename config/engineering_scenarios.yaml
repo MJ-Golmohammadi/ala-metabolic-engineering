@@ -104,6 +104,22 @@ carbon_equivalency_calculation:
   citrate: "C6H8O7 (6C) → 10.0 mmol × 6 = 60 mmol C"
   serine: "C3H7NO3 (3C) → 20.0 mmol × 3 = 60 mmol C"
   ferulate: "C10H10O4 (10C) → 6.0 mmol × 10 = 60 mmol C"
+  
+  
+pathway_definitions:
+  G1SAT_pathway:
+    reactions:
+      - ICDHyr
+      - GLUSy
+      - GLUDy
+      - GLUTRS
+      - GLUTRR
+      - G1SAT
+
+competitive_pathways:
+  G1SAT: PPBNGS
+
+
 
 engineering_scenarios:
   # Control scenario - wild type strain
