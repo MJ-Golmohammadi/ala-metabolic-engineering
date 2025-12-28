@@ -354,14 +354,20 @@ def create_engineered_strain(
 ) -> cobra.Model:
     """
     Apply modifications relative to WT secondary fluxes and lock bounds on the
-    modified values (not on original bounds). Also create DM reactions for any
-    product metabolites that are produced in excess (prod > total_consumption).
+    modified values. This implementation computes final targets for key reactions
+    (notably G1SAT) by combining:
+      - own direct effect (3/5 of the single-reaction scenario),
+      - precursor collective effect (2/5, proportional to net precursor change),
+      - consumer effect (inverted sign for consumers like PPBNGS).
 
-    - wild_secondary_map: reaction_id -> signed wild_secondary flux (from apply_wild_secondary_fluxes)
-      If a reaction is not present or wild_secondary == 0, fallback logic may be used.
-    - modifications: reaction_id -> tag (e.g., 'overexpress_4x', 'knockdown_40', 'knockout')
-    - precursor_map: reaction_id -> list of precursor reaction_ids
-    - consumer_map: mapping producer -> consumer (optional). We'll still detect other consumers.
+    The function performs two passes:
+      1) parse all modification tags and build a provisional fold_map
+         (reaction_id -> fold; fold=1.0 means unchanged).
+      2) compute final targets using fold_map + precursor_map + consumer_map,
+         then hard-lock reactions using hard_lock_with_auto_supply.
+
+    All locks use hard_lock_with_auto_supply so that required substrates/cofactors
+    are automatically provided via SUPPLY_ reactions to avoid infeasibility.
     """
 
     engineered = base_model.copy()
@@ -369,103 +375,190 @@ def create_engineered_strain(
     precursor_map = precursor_map or {}
     consumer_map = consumer_map or {}
 
-    # parse modifications
-    parsed = {}
+    # -------------------------
+    # 1) Parse modifications -> provisional fold map
+    #    fold_map[rxn] = fold multiplier (overexpress k -> k, knockdown -> fraction, knockout -> 0)
+    # -------------------------
+    fold_map: Dict[str, float] = {}
+    parsed_tags: Dict[str, Tuple[str, float]] = {}
+
     for rxn_id, tag in modifications.items():
         try:
-            parsed[rxn_id] = parse_mod_tag(tag)
+            mode, val = parse_mod_tag(tag)
+            parsed_tags[rxn_id] = (mode, val)
+            if mode == "overexpress":
+                fold_map[rxn_id] = float(val)  # e.g., 4.0 for overexpress_4x
+            elif mode == "knockdown":
+                fold_map[rxn_id] = float(val)  # fraction remaining, e.g., 0.6
+            elif mode == "knockout":
+                fold_map[rxn_id] = 0.0
+            else:
+                fold_map[rxn_id] = 1.0
         except Exception as e:
             logger.warning(f"Failed to parse modification tag for {rxn_id}: {tag} ({e})")
-            parsed[rxn_id] = (None, None)
+            parsed_tags[rxn_id] = (None, None)
+            fold_map[rxn_id] = 1.0
 
-    # apply modifications relative to wild_secondary_map
-    for rxn_id, (mtype, mval) in parsed.items():
+    # For reactions not mentioned, default fold = 1.0 (unchanged)
+    # (we will only apply locks for reactions present in parsed_tags)
+
+    # -------------------------
+    # 2) Compute final targets
+    #    Special logic for G1SAT: combine own 3/5 effect + 2/5 from precursors and consumers.
+    # -------------------------
+    TARGET_KEY = "G1SAT"
+    CONSUMER_KEY = "PPBNGS"  # consumer of ALA (example); consumer_map can override if provided
+
+    # Helper to compute own_change (signed) from parsed tag
+    def compute_own_change(mode: Optional[str], val: Optional[float]) -> float:
+        """
+        Return signed 'own change' relative to baseline:
+          - overexpress k -> own_change = k - 1  (positive)
+          - knockdown fraction -> own_change = -(1 - fraction) (negative)
+          - knockout -> own_change = -1.0
+          - None/unchanged -> 0.0
+        This value represents the absolute fold-change minus 1 (signed).
+        """
+        if mode == "overexpress":
+            return float(val) - 1.0
+        if mode == "knockdown":
+            return -(1.0 - float(val))
+        if mode == "knockout":
+            return -1.0
+        return 0.0
+
+    # Build a map of own_change for all parsed reactions
+    own_change_map: Dict[str, float] = {}
+    for rxn_id, (mode, val) in parsed_tags.items():
+        own_change_map[rxn_id] = compute_own_change(mode, val)
+
+    # Now compute final target for each modified reaction.
+    # For most reactions: target = wt_secondary * fold (or fallback if wt_secondary ~ 0)
+    # For G1SAT: special combination.
+    parsed_targets: Dict[str, float] = {}
+
+    for rxn_id, (mode, val) in parsed_tags.items():
+        # skip if reaction not in model
         if rxn_id not in engineered.reactions:
-            logger.warning(f"Reaction {rxn_id} not found in model; skipping")
+            logger.warning(f"Reaction {rxn_id} not found in model; skipping target computation")
             continue
 
-        rxn = engineered.reactions.get_by_id(rxn_id)
         wt_secondary = float(wild_secondary_map.get(rxn_id, 0.0))
-
-        # KNOCKOUT
-        if mtype == "knockout":
-            hard_lock_with_auto_supply(engineered, rxn_id, 0.0)
-            logger.info(f"[KO] {rxn_id} locked to 0")
-            continue
-
-        # KNOCKDOWN
-        if mtype == "knockdown":
-            fraction = float(mval)  # remaining fraction (e.g., 0.6)
+        # default fallback cap
+        if mode == "overexpress":
+            k = min(float(val), cap_factor)
             if abs(wt_secondary) >= 1e-12:
-                target = wt_secondary * fraction
-                hard_lock_with_auto_supply(engineered, rxn_id, target)
-                logger.info(f"[KD] {rxn_id}: wt_secondary={wt_secondary:.6g} -> target={target:.6g}")
+                # default simple target (may be overridden for G1SAT)
+                parsed_targets[rxn_id] = wt_secondary * k
             else:
-                # fallback: scale current bounds conservatively
-                prev = (rxn.lower_bound, rxn.upper_bound)
-                rxn.lower_bound *= fraction
-                rxn.upper_bound *= fraction
-                logger.info(f"[KD-fallback] {rxn_id}: {prev} -> ({rxn.lower_bound},{rxn.upper_bound})")
-            continue
+                # fallback capacity when no WT baseline exists: reasonable cap
+                raw = cap_factor * k
+                max_abs = 10.0
+                parsed_targets[rxn_id] = min(raw, max_abs) if raw >= 0 else max(raw, -max_abs)
 
-        # OVEREXPRESSION (3/5 + conditional 2/5)
-        if mtype == "overexpress":
-            k = min(float(mval), cap_factor)
-            base_mult = (3.0 / 5.0) * k
-            extra_mult = (2.0 / 5.0) * k
-
-            # compute extra_fraction from precursors (use real_increase = k-1)
-            extra_fraction = 0.0
-            precs = precursor_map.get(rxn_id, [])
-            if precs:
-                sum_support = 0.0
-                sum_negative = 0.0
-                for p in precs:
-                    pmod = parsed.get(p, (None, None))
-                    if pmod[0] == "overexpress":
-                        p_k = min(float(pmod[1]), cap_factor)
-                        real_inc = max(p_k - 1.0, 0.0)
-                        sum_support += (3.0 / 5.0) * real_inc
-                    elif pmod[0] == "knockdown":
-                        kd_frac = 1.0 - float(pmod[1])
-                        sum_negative += kd_frac
-                    elif pmod[0] == "knockout":
-                        sum_negative += 1.0
-                support_fraction = (sum_support - sum_negative) / 5.0
-                extra_fraction = min(max(support_fraction, 0.0), 1.0)
-            else:
-                extra_fraction = 0.0
-
-            # final multiplier applied to wt_secondary
+        elif mode == "knockdown":
+            fraction = float(val)
             if abs(wt_secondary) >= 1e-12:
-                base_target = wt_secondary * base_mult
-                extra_target = wt_secondary * extra_mult
-                final_target = base_target + extra_fraction * extra_target
-                hard_lock_with_auto_supply(engineered, rxn_id, final_target)
-                logger.info(f"[OE] {rxn_id}: wt_secondary={wt_secondary:.6g}, k={k}, base={base_target:.6g}, extra_frac={extra_fraction:.3f}, final={final_target:.6g}")
+                parsed_targets[rxn_id] = wt_secondary * fraction
             else:
-                # fallback capacity when no WT baseline exists: set a reasonable capacity
-                fallback = cap_factor * k              
-                hard_lock_with_auto_supply(engineered, rxn_id, fallback)
-                logger.info(f"[OE-fallback] {rxn_id}: WT_secondary≈0 -> fallback ub={fallback}")
-            continue
+                # fallback: scale current upper bound conservatively
+                prev_ub = engineered.reactions.get_by_id(rxn_id).upper_bound
+                parsed_targets[rxn_id] = prev_ub * fraction
 
-    # ---------------------------------------------------------
-    # After applying modifications, create DM for any produced metabolite
-    # that is produced more than consumed (across all consumers).
-    # We run a quick optimization to get fluxes and then inspect net production per metabolite.
-    # ---------------------------------------------------------
+        elif mode == "knockout":
+            parsed_targets[rxn_id] = 0.0
+
+        else:
+            # unknown/none -> no change
+            parsed_targets[rxn_id] = float(wt_secondary)
+
+    # -------------------------
+    # Special handling: compute G1SAT final target using combined logic
+    # -------------------------
+    if TARGET_KEY in parsed_tags and TARGET_KEY in engineered.reactions:
+        # own change for G1SAT
+        g_mode, g_val = parsed_tags[TARGET_KEY]
+        own_change = compute_own_change(g_mode, g_val)  # signed
+
+        # own contribution = 3/5 * own_change (applied to baseline)
+        own_contrib_fraction = (3.0 / 5.0) * own_change
+
+        # precursor contribution: sum of (k_p - 1) across precursors
+        precs = precursor_map.get(TARGET_KEY, [])
+        sum_prec_changes = 0.0
+        for p in precs:
+            # use own_change_map if precursor was modified, else 0
+            sum_prec_changes += own_change_map.get(p, 0.0)
+
+        # normalize precursor net change into [-1, 1] by dividing by 5 and clamping
+        precursor_extra_fraction = max(min(sum_prec_changes / 5.0, 1.0), -1.0)
+
+        # consumer contribution (e.g., PPBNGS) - reversed sign
+        # If consumer_map maps TARGET_KEY -> consumer_rxn, use that; else use CONSUMER_KEY
+        consumer_rxn_id = consumer_map.get(TARGET_KEY, CONSUMER_KEY)
+        sum_consumer_changes = 0.0
+        if consumer_rxn_id and consumer_rxn_id in own_change_map:
+            sum_consumer_changes = own_change_map.get(consumer_rxn_id, 0.0)
+        # invert sign because consumer upregulation reduces net product
+        consumer_extra_fraction = - max(min(sum_consumer_changes / 5.0, 1.0), -1.0)
+
+        # combined extra fraction from precursors and consumer (both scaled by 2/5)
+        combined_extra_fraction = (2.0 / 5.0) * (precursor_extra_fraction + consumer_extra_fraction)
+
+        # total fractional change to apply to baseline = own_contrib_fraction + combined_extra_fraction
+        total_fractional_change = own_contrib_fraction + combined_extra_fraction
+
+        # baseline wt_secondary for G1SAT
+        wt_g = float(wild_secondary_map.get(TARGET_KEY, 0.0))
+
+        if abs(wt_g) >= 1e-12:
+            final_g_target = wt_g * (1.0 + total_fractional_change)
+        else:
+            # fallback: if no baseline, use cap logic based on overexpression tag if present
+            if g_mode == "overexpress":
+                k = min(float(g_val), cap_factor)
+                raw = cap_factor * k
+                max_abs = 10.0
+                final_g_target = min(raw, max_abs)
+            elif g_mode == "knockdown" or g_mode == "knockout":
+                # if no baseline and knockdown/knockout, target is 0
+                final_g_target = 0.0
+            else:
+                final_g_target = 0.0
+
+        parsed_targets[TARGET_KEY] = final_g_target
+        logger.info(
+            f"[G1SAT-final] wt={wt_g:.6g}, own_change={own_change:.6g}, "
+            f"own_contrib={own_contrib_fraction:.6g}, prec_extra={precursor_extra_fraction:.6g}, "
+            f"cons_extra={consumer_extra_fraction:.6g}, total_frac={total_fractional_change:.6g}, "
+            f"final_target={final_g_target:.6g}"
+        )
+
+    # -------------------------
+    # 3) Apply hard locks (with auto-supply) using parsed_targets
+    #    We apply locks after computing all targets so that G1SAT target
+    #    reflects modifications to precursors/consumers.
+    # -------------------------
+    if lock_on_modify:
+        for rxn_id, target in parsed_targets.items():
+            # Only lock reactions that were explicitly modified (present in parsed_tags)
+            if rxn_id not in parsed_tags:
+                continue
+            try:
+                hard_lock_with_auto_supply(engineered, rxn_id, float(target))
+            except Exception as e:
+                logger.error(f"Failed to hard-lock {rxn_id} at {target}: {e}")
+
+    # -------------------------
+    # 4) DM creation (unchanged logic)
+    # -------------------------
     with engineered:
-        # objective: maximize total production of all demand reactions if exist, else biomass
-        # but we only need fluxes; use biomass objective if present
         if "BIOMASS_KT2440_WT3" in engineered.reactions:
             engineered.objective = engineered.reactions.get_by_id("BIOMASS_KT2440_WT3")
         sol = engineered.optimize()
         if sol.status != "optimal":
             logger.warning("Post-modification optimization not optimal; DM creation will still attempt using available fluxes")
 
-        # compute net production per metabolite from reaction fluxes
-        # net_prod(m) = sum_r flux_r * stoich(m in r) where stoich positive means production
         net_prod = {}
         fluxes = sol.fluxes if sol is not None else {}
         for rxn_id, flux in fluxes.items():
@@ -476,13 +569,10 @@ def create_engineered_strain(
             if abs(f) < 1e-12:
                 continue
             for met, coeff in r.metabolites.items():
-                # coeff < 0 means consumed by reaction as written; coeff > 0 means produced
                 net_prod[met.id] = net_prod.get(met.id, 0.0) + f * float(coeff)
 
-        # For each metabolite with positive net production, ensure a DM exists to export it
         for met_id, net in net_prod.items():
             if net > 1e-9:
-                # prefer cytosolic metabolite object if available
                 try:
                     met = engineered.metabolites.get_by_id(met_id)
                 except KeyError:
@@ -500,6 +590,7 @@ def create_engineered_strain(
                     logger.info(f"[DM] {dm_id} exists; net production {net:.6g} will be exported")
 
     return engineered
+
 
 
 
