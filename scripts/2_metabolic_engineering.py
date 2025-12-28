@@ -28,9 +28,9 @@ from models.model_utils import (
     simulate_with_objective,
     calculate_yield_metrics,
     ensure_demand_for_metabolite,
-    get_substrate_rxn_for_environment
+    get_substrate_rxn_for_environment,
+    create_engineered_strain
 )
-from models.model_utils import create_engineered_strain
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
