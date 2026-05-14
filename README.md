@@ -55,7 +55,9 @@ pip install -r requirements.txt
 
 jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
 
+# 3. Run preprocessing file for models
+python .\models\rnaseq_constrain_iJN1463.py
 
-# 3. Run complete analysis
+# 4. Run complete analysis
 python run_analysis.py
 
