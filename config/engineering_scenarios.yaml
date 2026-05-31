@@ -2,6 +2,8 @@
 # Standardized Environments for Scientific Comparison
 # All environments have identical parameters and values for fair comparison
 
+#Author: [Mohammad Javad Golmohammadi]
+
 environments:
   # Standardized carbon-equivalent conditions (60 mmol C/gDW/h)
   # All environments have EXACTLY the same parameters and values
