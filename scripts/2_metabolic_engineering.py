@@ -10,6 +10,9 @@ Main engineering pipeline (final version).
 - Simulates objectives with simulate_with_objective (returns sol, min_growth_abs)
 - Computes yields with calculate_yield_metrics
 - Saves consolidated CSV for all environments
+
+
+Author: [Mohammad Javad Golmohammadi]
 """
 
 import os
