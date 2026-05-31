@@ -158,7 +158,7 @@ def main():
     """Enhanced main function for multi-environment impact scoring"""
     try:
         # Load enhanced engineering results
-        engineering_df = pd.read_csv("results/tables/enhanced_engineering_results.csv")
+        engineering_df = pd.read_csv("results/tables/enhanced_engineering_results_all_envs.csv")
         
         print("🚀 Calculating comprehensive FBA impact scores across all environments...")
         impact_scores_df = calculate_comprehensive_impact_scores(engineering_df)
