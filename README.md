@@ -1,10 +1,15 @@
-# 🧬 5-ALA Metabolic Engineering in *Pseudomonas putida* KT2440
+# 🧬 Comprehensive Computational Framework for 5-ALA Production in _Pseudomonas putida_ KT2440: A Multi-Omics Integrated Metabolic Engineering Pipeline
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![COBRApy](https://img.shields.io/badge/COBRApy-0.26.3-green.svg)](https://opencobra.github.io/cobrapy/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A comprehensive computational framework for metabolic engineering of **5-Aminolevulinic Acid (5-ALA)** production in *Pseudomonas putida* KT2440. This repository integrates **Flux Balance Analysis (FBA)**, **RNA-seq constraints**, **thermodynamic modeling**, and **Machine Learning** to identify optimal genetic engineering strategies.
+ The pipeline integrates **flux balance analysis (FBA), RNA-seq expression constraints, thermodynamic modeling, flux variability analysis (FVA), machine learning, and multi-criteria decision analysis** to systematically identify optimal genetic engineering strategies across four distinct carbon environments (glucose, citrate, serine, and ferulate). The current implementation serves as a static constraint‑based framework for metabolic engineering target prioritization and hypothesis generation. Upon future development of a fully dynamic genome‑scale metabolic model, this pipeline can be readily extended to enable dynamic simulations and real‑time flux reallocation analyses.   “This project made extensive use of artificial intelligence (Microsoft Copilot and DeepSeek) for code generation, refactoring, documentation, etc. While the conceptual framework and biological interpretations remained human‑driven, AI significantly accelerated the implementation process and helped maintain high coding standards throughout the pipeline.”
+
+ ## Project Status
+
+The project is currently incomplete. While the computational framework has been partially implemented, the genome‑scale metabolic model (iJN1463) lacks the robustness needed for systematic engineering: many multi‑gene modification scenarios lead to infeasible solutions, preventing reliable optimization. Completion of this project awaits a more robust model that can tolerate multiple simultaneous genetic perturbations without loss of feasibility.
+
 
 ## 📋 Table of Contents
 
