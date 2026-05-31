@@ -11,6 +11,9 @@ It expects models in models/final_constrained_rnaseq_thermo named:
   iJN1463_Cit_ExprThermoConstrainedFile.xml
   iJN1463_Ser_ExprThermoConstrainedFile.xml
   iJN1463_Fer_ExprThermoConstrainedFile.xml
+
+
+Author: [Mohammad Javad Golmohammadi]
 """
 
 import cobra
