@@ -216,8 +216,8 @@ def main():
         print(f"\n🌍 Analyzing environment: {environment}")
         
         try:
-            # Load environment-specific constrained model
-            model_path = f"models/final_constrained_rnaseq_thermo/iJN1463_{environment}_ExprThermoConstrainedFile.xml"
+            # Load environment-specific constrained
+            model_path = f"models/final_constrained_rnaseq_thermo/iJN1463_{environment}_preprocessed_with_DM.xml"
             base_model = cobra.io.read_sbml_model(model_path)
             
             # Analyze wild-type for this environment
