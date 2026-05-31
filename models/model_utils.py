@@ -18,6 +18,8 @@ Create engineered strain with advanced mutation logic:
 - Checks precursor sum to decide whether to enable the extra 2/5
 - Handles consumer reaction (e.g., PPBNGS) with reversed logic
 - Provides safe fallback when WT flux ~ 0
+
+Author: [Mohammad Javad Golmohammadi]
 """
 
 import cobra
