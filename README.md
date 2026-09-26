@@ -8,21 +8,7 @@
 
  ## Project Status
 
-The project is currently incomplete. While the computational framework has been partially implemented, the genome‑scale metabolic model (iJN1463) lacks the robustness needed for systematic engineering: many multi‑gene modification scenarios lead to infeasible solutions, preventing reliable optimization. Completion of this project awaits a more robust model that can tolerate multiple simultaneous genetic perturbations without loss of feasibility.
-
-
-## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Key Features](#key-features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Workflow](#workflow)
-- [Repository Structure](#repository-structure)
-- [Input Data](#input-data)
-- [Output Results](#output-results)
-- [Citation](#citation)
-- [License](#license)
+The project is currently incomplete. While the computational framework has been partially implemented, the genome‑scale metabolic model (iJN1463) lacks the robustness needed for systematic engineering: many multi‑gene modification scenarios lead to infeasible solutions, preventing reliable optimization. Completion of this project awaits a more robust model that can tolerate multiple simultaneous genetic perturbations without loss of feasibility. "Therefore, it should be emphasized that the machine-learning stage of this project was also not developed or implemented."
 
 ## 🎯 Overview
 
